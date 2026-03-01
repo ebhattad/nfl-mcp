@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      NFL_MCP_DB_PATH: ${{ github.workspace }}/.nfl-mcp-ci/nflread.duckdb
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,7 +22,12 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install ".[dev]"
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Ingest 2024 data for E2E tests
+        run: nfl-mcp ingest --start 2024 --end 2024
 
       - name: Run tests
         run: pytest -q
