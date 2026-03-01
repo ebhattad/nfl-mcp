@@ -50,6 +50,8 @@ def ingest(start, end, fresh, skip_views):
 
     Run 'nfl-mcp init' first if you haven't set up yet.
     """
+    if start > end:
+        raise click.UsageError("--start must be less than or equal to --end.")
     from .ingest import run_ingest
     run_ingest(start=start, end=end, fresh=fresh, skip_views=skip_views)
 
@@ -67,6 +69,8 @@ def ingest(start, end, fresh, skip_views):
               help="Skip data ingestion (configure only).")
 def init(start, end, skip_ingest):
     """Interactive setup wizard — configure database, load data, set up your IDE."""
+    if start > end:
+        raise click.UsageError("--start must be less than or equal to --end.")
     from .config import save_config, load_config, DEFAULT_DUCKDB_PATH
 
     click.echo()

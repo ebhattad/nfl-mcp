@@ -1,7 +1,7 @@
 # nfl-mcp
 
 MCP server for NFL play-by-play data (2013–2025), powered by [nflreadpy](https://github.com/nflverse/nflreadpy) and DuckDB.
-Query 12 years of NFL play-by-play data using natural language in Claude Code, VS Code, or Claude Desktop.
+Query 13 seasons of NFL play-by-play data using natural language in Claude Code, VS Code, or Claude Desktop.
 
 Ask Claude questions like:
 - *"Who had the best EPA per play in 2024?"*
@@ -13,7 +13,7 @@ Ask Claude questions like:
 
 ```bash
 pip install nfl-mcp        # or: uvx nfl-mcp
-nfl-mcp init               # downloads data, configures your IDE — that's it
+nfl-mcp init               # defaults to all 13 seasons (2013–2025) + IDE setup
 ```
 
 No database server to install. No credentials to manage. Data is stored locally in DuckDB.
@@ -33,7 +33,7 @@ nfl-mcp init
 
 The wizard will:
 1. Configure the local DuckDB database path
-2. Download NFL play-by-play data for all seasons (2013–2025)
+2. Download NFL play-by-play data for all 13 seasons by default (2013–2025)
 3. Auto-configure your IDE (Claude Desktop and/or VS Code)
 
 Options:
@@ -43,6 +43,9 @@ Options:
 --end   2024        Last season  (default: 2025)
 --skip-ingest       Configure without loading data
 ```
+
+`--start` must be less than or equal to `--end`.
+With no flags, `nfl-mcp init` loads all seasons from 2013 through 2025.
 
 ### 2. Verify
 
@@ -80,7 +83,7 @@ Or configure manually — add to `.vscode/mcp.json`:
 ```
 nfl-mcp init               Interactive setup wizard
 nfl-mcp serve              Start the MCP server (stdio)
-nfl-mcp ingest             Load/reload play-by-play data
+nfl-mcp ingest             Load/reload play-by-play data (default: 2013–2025)
 nfl-mcp setup-client       Configure IDE MCP clients
 nfl-mcp doctor             Health check
 ```
@@ -88,6 +91,7 @@ nfl-mcp doctor             Health check
 ### Ingestion options
 
 ```
+nfl-mcp ingest                                Load all 13 seasons (default)
 nfl-mcp ingest --start 2020 --end 2024    Load specific seasons
 nfl-mcp ingest --fresh                     Drop and reload all data
 nfl-mcp ingest --skip-views                Skip aggregate table creation
@@ -107,7 +111,7 @@ nfl-mcp ingest --skip-views                Skip aggregate table creation
 
 ## Database Schema
 
-~595K plays across 2013–2025, 372 nflreadpy columns preserved as-is.
+Hundreds of thousands of plays across 2013–2025, with 370+ nflreadpy columns preserved as-is.
 
 **Key tables:**
 - `plays` — every play, all columns
@@ -134,6 +138,23 @@ pip install -e ".[dev]"
 nfl-mcp init --start 2024 --end 2024
 pytest
 ```
+
+## Troubleshooting
+
+- `nfl-mcp doctor` is the fastest way to verify config, database, and client setup.
+- If tools return database errors, run `nfl-mcp ingest` (or rerun `nfl-mcp init`) to ensure `plays` is loaded.
+- You can override the DB location with `NFL_MCP_DB_PATH=/path/to/nflread.duckdb`.
+
+## Branch + PR Enforcement (GitHub)
+
+To force branch-based contributions and test-gated merges on `main`, set these in **GitHub → Settings → Rules/Branches**:
+
+- Require a pull request before merging
+- Require approvals (at least 1)
+- Require conversation resolution before merging
+- Require status checks to pass before merging: select `CI / test`
+- Require branches to be up to date before merging
+- Restrict who can push to matching branches (or block direct pushes to `main` entirely)
 
 ## License
 

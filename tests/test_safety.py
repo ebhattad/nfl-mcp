@@ -104,6 +104,7 @@ class TestNflQueryGuardrails:
 
 # ── nfl_query with live DuckDB ────────────────────────────────────────────────
 
+@pytest.mark.integration
 class TestNflQueryLive:
     """Integration tests that require the DuckDB database to be loaded."""
 

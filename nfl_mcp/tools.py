@@ -12,7 +12,7 @@ NFL MCP Server tools:
 import logging
 import re
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 import duckdb
 
@@ -477,6 +477,7 @@ _FORBIDDEN = re.compile(
 )
 
 _MAX_ROWS = 500
+_QUERY_TIMEOUT_SECONDS = 10
 
 
 def nfl_schema(category: str | None = None) -> Dict[str, Any]:
@@ -582,29 +583,39 @@ def nfl_search_plays(
 ) -> Dict[str, Any]:
     """Search for plays using structured filters instead of raw SQL."""
     conditions = []
+    params: list[Any] = []
     if team:
-        conditions.append(f"posteam = '{_sanitize(team)}'")
+        conditions.append("posteam = ?")
+        params.append(team)
     if opponent:
-        conditions.append(f"defteam = '{_sanitize(opponent)}'")
+        conditions.append("defteam = ?")
+        params.append(opponent)
     if player:
-        p = _sanitize(player)
         conditions.append(
-            f"(passer_player_name ILIKE '%{p}%' "
-            f"OR rusher_player_name ILIKE '%{p}%' "
-            f"OR receiver_player_name ILIKE '%{p}%')"
+            "(passer_player_name ILIKE ? "
+            "OR rusher_player_name ILIKE ? "
+            "OR receiver_player_name ILIKE ?)"
         )
+        pattern = f"%{player}%"
+        params.extend([pattern, pattern, pattern])
     if season:
-        conditions.append(f"season = {int(season)}")
+        conditions.append("season = ?")
+        params.append(int(season))
     if season_from:
-        conditions.append(f"season >= {int(season_from)}")
+        conditions.append("season >= ?")
+        params.append(int(season_from))
     if season_to:
-        conditions.append(f"season <= {int(season_to)}")
+        conditions.append("season <= ?")
+        params.append(int(season_to))
     if week:
-        conditions.append(f"week = {int(week)}")
+        conditions.append("week = ?")
+        params.append(int(week))
     if season_type:
-        conditions.append(f"season_type = '{_sanitize(season_type)}'")
+        conditions.append("season_type = ?")
+        params.append(season_type)
     if play_type:
-        conditions.append(f"play_type = '{_sanitize(play_type)}'")
+        conditions.append("play_type = ?")
+        params.append(play_type)
     if situation == "red_zone":
         conditions.append("yardline_100 <= 20")
     elif situation == "third_down":
@@ -618,7 +629,8 @@ def nfl_search_plays(
     if is_turnover:
         conditions.append("(interception = 1 OR fumble_lost = 1)")
     if min_yards is not None:
-        conditions.append(f"yards_gained >= {int(min_yards)}")
+        conditions.append("yards_gained >= ?")
+        params.append(int(min_yards))
 
     where = " AND ".join(conditions) if conditions else "1=1"
     max_rows = min(max_rows, _MAX_ROWS)
@@ -632,7 +644,7 @@ def nfl_search_plays(
     )
 
     try:
-        rows = _execute(sql)
+        rows = _execute(sql, params)
         return {"rows": rows, "row_count": len(rows)}
     except (duckdb.Error, ValueError, TimeoutError) as e:
         logger.error("Tool error: %s", e, exc_info=True)
@@ -645,30 +657,26 @@ def nfl_team_stats(
     side: str = "both",
 ) -> Dict[str, Any]:
     """Get pre-aggregated team stats (offense, defense, or both)."""
-    team = _sanitize(team).upper()
+    team = team.upper()
     results = {}
+    season_clause = ""
+    season_params: list[Any] = []
+    if season:
+        season_clause = " AND season_year = ?"
+        season_params.append(int(season))
 
     try:
         if side in ("offense", "both"):
-            sql = f"SELECT * FROM team_offense_stats WHERE team = '{team}'"
-            if season:
-                sql += f" AND season_year = {int(season)}"
-            sql += " ORDER BY season_year"
-            results["offense"] = _execute(sql)
+            sql = f"SELECT * FROM team_offense_stats WHERE team = ?{season_clause} ORDER BY season_year"
+            results["offense"] = _execute(sql, [team, *season_params])
 
         if side in ("defense", "both"):
-            sql = f"SELECT * FROM team_defense_stats WHERE team = '{team}'"
-            if season:
-                sql += f" AND season_year = {int(season)}"
-            sql += " ORDER BY season_year"
-            results["defense"] = _execute(sql)
+            sql = f"SELECT * FROM team_defense_stats WHERE team = ?{season_clause} ORDER BY season_year"
+            results["defense"] = _execute(sql, [team, *season_params])
 
         if side in ("situational", "both"):
-            sql = f"SELECT * FROM situational_stats WHERE team = '{team}'"
-            if season:
-                sql += f" AND season_year = {int(season)}"
-            sql += " ORDER BY season_year, situation"
-            results["situational"] = _execute(sql)
+            sql = f"SELECT * FROM situational_stats WHERE team = ?{season_clause} ORDER BY season_year, situation"
+            results["situational"] = _execute(sql, [team, *season_params])
 
         return results
     except (duckdb.Error, ValueError, TimeoutError) as e:
@@ -685,10 +693,10 @@ def nfl_player_stats(
     stat_type: str = "passing",
 ) -> Dict[str, Any]:
     """Aggregate player stats by season."""
-    p = _sanitize(player_name)
+    params: list[Any] = []
 
     if stat_type == "passing":
-        sql = f"""
+        sql = """
             SELECT season, season_type, COUNT(*) AS attempts,
                 SUM(CASE WHEN complete_pass = 1 THEN 1 ELSE 0 END) AS completions,
                 ROUND(100.0 * SUM(CASE WHEN complete_pass = 1 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS comp_pct,
@@ -700,10 +708,11 @@ def nfl_player_stats(
                 SUM(COALESCE(air_yards, 0)) AS air_yards,
                 ROUND(AVG(air_yards), 1) AS avg_air_yards
             FROM plays
-            WHERE passer_player_name ILIKE '%{p}%' AND play_type = 'pass'
+            WHERE passer_player_name ILIKE ? AND play_type = ?
         """
+        params.extend([f"%{player_name}%", "pass"])
     elif stat_type == "rushing":
-        sql = f"""
+        sql = """
             SELECT season, season_type, COUNT(*) AS carries,
                 SUM(COALESCE(rushing_yards, 0)) AS yards,
                 ROUND(AVG(yards_gained), 1) AS yards_per_carry,
@@ -712,10 +721,11 @@ def nfl_player_stats(
                 ROUND(AVG(epa), 3) AS avg_epa,
                 SUM(CASE WHEN yards_gained >= 10 THEN 1 ELSE 0 END) AS explosive_runs
             FROM plays
-            WHERE rusher_player_name ILIKE '%{p}%' AND play_type = 'run'
+            WHERE rusher_player_name ILIKE ? AND play_type = ?
         """
+        params.extend([f"%{player_name}%", "run"])
     elif stat_type == "receiving":
-        sql = f"""
+        sql = """
             SELECT season, season_type, COUNT(*) AS targets,
                 SUM(CASE WHEN complete_pass = 1 THEN 1 ELSE 0 END) AS receptions,
                 SUM(COALESCE(receiving_yards, 0)) AS yards,
@@ -724,23 +734,28 @@ def nfl_player_stats(
                 ROUND(AVG(epa), 3) AS avg_epa,
                 SUM(CASE WHEN yards_gained >= 20 THEN 1 ELSE 0 END) AS explosive_plays
             FROM plays
-            WHERE receiver_player_name ILIKE '%{p}%' AND play_type = 'pass'
+            WHERE receiver_player_name ILIKE ? AND play_type = ?
         """
+        params.extend([f"%{player_name}%", "pass"])
     else:
         return {"error": f"Unknown stat_type: {stat_type}. Use 'passing', 'rushing', or 'receiving'."}
 
     if season:
-        sql += f" AND season = {int(season)}"
+        sql += " AND season = ?"
+        params.append(int(season))
     if season_from:
-        sql += f" AND season >= {int(season_from)}"
+        sql += " AND season >= ?"
+        params.append(int(season_from))
     if season_to:
-        sql += f" AND season <= {int(season_to)}"
+        sql += " AND season <= ?"
+        params.append(int(season_to))
     if season_type:
-        sql += f" AND season_type = '{_sanitize(season_type)}'"
+        sql += " AND season_type = ?"
+        params.append(season_type)
     sql += " GROUP BY season, season_type ORDER BY season, season_type"
 
     try:
-        rows = _execute(sql)
+        rows = _execute(sql, params)
         return {"player": player_name, "stat_type": stat_type, "seasons": rows}
     except (duckdb.Error, ValueError, TimeoutError) as e:
         logger.error("Tool error: %s", e, exc_info=True)
@@ -757,21 +772,39 @@ def nfl_compare(
     season_type: str | None = None,
 ) -> Dict[str, Any]:
     """Side-by-side comparison of two teams or players."""
-    e1, e2 = _sanitize(entity1), _sanitize(entity2)
+    e1, e2 = entity1, entity2
 
     try:
         if compare_type == "team":
             t1, t2 = e1.upper(), e2.upper()
-            season_filter = f" AND season_year = {int(season)}" if season else ""
+            season_filter = ""
+            season_params: list[Any] = []
+            if season:
+                season_filter += " AND season_year = ?"
+                season_params.append(int(season))
             if season_from:
-                season_filter += f" AND season_year >= {int(season_from)}"
+                season_filter += " AND season_year >= ?"
+                season_params.append(int(season_from))
             if season_to:
-                season_filter += f" AND season_year <= {int(season_to)}"
+                season_filter += " AND season_year <= ?"
+                season_params.append(int(season_to))
 
-            off1 = _execute(f"SELECT * FROM team_offense_stats WHERE team = '{t1}'{season_filter} ORDER BY season_year")
-            off2 = _execute(f"SELECT * FROM team_offense_stats WHERE team = '{t2}'{season_filter} ORDER BY season_year")
-            def1 = _execute(f"SELECT * FROM team_defense_stats WHERE team = '{t1}'{season_filter} ORDER BY season_year")
-            def2 = _execute(f"SELECT * FROM team_defense_stats WHERE team = '{t2}'{season_filter} ORDER BY season_year")
+            off1 = _execute(
+                f"SELECT * FROM team_offense_stats WHERE team = ?{season_filter} ORDER BY season_year",
+                [t1, *season_params],
+            )
+            off2 = _execute(
+                f"SELECT * FROM team_offense_stats WHERE team = ?{season_filter} ORDER BY season_year",
+                [t2, *season_params],
+            )
+            def1 = _execute(
+                f"SELECT * FROM team_defense_stats WHERE team = ?{season_filter} ORDER BY season_year",
+                [t1, *season_params],
+            )
+            def2 = _execute(
+                f"SELECT * FROM team_defense_stats WHERE team = ?{season_filter} ORDER BY season_year",
+                [t2, *season_params],
+            )
 
             return {
                 entity1: {"offense": off1, "defense": def1},
@@ -779,13 +812,20 @@ def nfl_compare(
             }
 
         elif compare_type == "player":
-            season_filter = f" AND season = {int(season)}" if season else ""
+            season_filter = ""
+            season_params: list[Any] = []
+            if season:
+                season_filter += " AND season = ?"
+                season_params.append(int(season))
             if season_from:
-                season_filter += f" AND season >= {int(season_from)}"
+                season_filter += " AND season >= ?"
+                season_params.append(int(season_from))
             if season_to:
-                season_filter += f" AND season <= {int(season_to)}"
+                season_filter += " AND season <= ?"
+                season_params.append(int(season_to))
             if season_type:
-                season_filter += f" AND season_type = '{_sanitize(season_type)}'"
+                season_filter += " AND season_type = ?"
+                season_params.append(season_type)
 
             result = {}
             for p, label in [(e1, entity1), (e2, entity2)]:
@@ -797,9 +837,9 @@ def nfl_compare(
                 ]:
                     count_sql = (
                         f"SELECT COUNT(*) AS n FROM plays "
-                        f"WHERE {col} ILIKE '%{p}%' AND play_type = '{ptype}'{season_filter}"
+                        f"WHERE {col} ILIKE ? AND play_type = ?{season_filter}"
                     )
-                    count_row = _execute(count_sql)
+                    count_row = _execute(count_sql, [f"%{p}%", ptype, *season_params])
                     if count_row and count_row[0].get("n", 0) > 0:
                         player_result = nfl_player_stats(
                             label, season=season, season_from=season_from,
@@ -819,34 +859,41 @@ def nfl_compare(
         return {"error": str(e)}
 
 
-def _sanitize(val: str) -> str:
-    """Basic SQL injection prevention for string values."""
-    return val.replace("'", "''").replace(";", "").replace("--", "")
+def _execute(sql: str, params: Sequence[Any] | None = None) -> list[dict]:
+    """Execute SQL on DuckDB with timeout and cancellation.
 
-
-def _execute(sql: str) -> list[dict]:
-    """Execute SQL on DuckDB with a 10-second timeout.
-
-    Opens a fresh connection inside the worker thread to avoid sharing
-    a DuckDB connection across threads (which is not thread-safe).
+    Runs in a worker thread with a dedicated connection, and interrupts
+    the active query if it exceeds the timeout.
     """
     result = [None]
     error = [None]
+    thread_conn = [None]
 
     def _run():
         try:
-            with get_db_connection() as thread_conn:
-                rel = thread_conn.execute(sql)
+            with get_db_connection() as conn:
+                thread_conn[0] = conn
+                if params is None:
+                    rel = conn.execute(sql)
+                else:
+                    rel = conn.execute(sql, params)
                 columns = [desc[0] for desc in rel.description]
                 result[0] = [dict(zip(columns, row)) for row in rel.fetchall()]
         except Exception as e:
             error[0] = e
 
-    t = threading.Thread(target=_run)
+    t = threading.Thread(target=_run, daemon=True)
     t.start()
-    t.join(timeout=10)
+    t.join(timeout=_QUERY_TIMEOUT_SECONDS)
     if t.is_alive():
-        raise TimeoutError("Query exceeded 10 second timeout")
+        conn = thread_conn[0]
+        if conn is not None:
+            try:
+                conn.interrupt()
+            except Exception:
+                logger.warning("Failed to interrupt timed out DuckDB query", exc_info=True)
+        t.join(timeout=1)
+        raise TimeoutError(f"Query exceeded {_QUERY_TIMEOUT_SECONDS} second timeout")
     if error[0]:
         raise error[0]
     return result[0]

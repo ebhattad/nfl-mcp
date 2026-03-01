@@ -22,6 +22,27 @@ logger = logging.getLogger("nfl-mcp")
 
 server = Server("nfl-playbyplay")
 
+
+def _tool_error_payload(tool_name: str, exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, ValueError) and str(exc).startswith("Unknown tool:"):
+        code = "UNKNOWN_TOOL"
+    elif isinstance(exc, TimeoutError):
+        code = "TIMEOUT"
+    elif isinstance(exc, TypeError):
+        code = "INVALID_ARGUMENTS"
+    else:
+        code = "TOOL_EXECUTION_ERROR"
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "tool": tool_name,
+        },
+    }
+
+
 TOOLS = [
     Tool(
         name="nfl_schema",
@@ -299,7 +320,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
 
     except Exception as e:
         logger.error(f"Error in {name}: {e}", exc_info=True)
-        return [TextContent(type="text", text=f"Error: {e}")]
+        return [TextContent(type="text", text=json.dumps(_tool_error_payload(name, e), indent=2))]
 
 
 async def run():

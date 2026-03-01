@@ -7,9 +7,9 @@ from nfl_mcp.tools import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _check_db():
-    """Skip all tests in this file if no data is loaded."""
+@pytest.fixture
+def require_db():
+    """Skip integration tests if no data is loaded."""
     result = nfl_query("SELECT COUNT(*) AS n FROM plays")
     if "error" in result:
         pytest.skip("No DuckDB database loaded")
@@ -44,6 +44,8 @@ class TestNflSchema:
         assert "available" in result
 
 
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
 class TestNflSearchPlays:
     def test_search_by_team(self):
         result = nfl_search_plays(team="KC", season=2024, max_rows=5)
@@ -81,6 +83,8 @@ class TestNflSearchPlays:
         assert result["row_count"] > 0
 
 
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
 class TestNflTeamStats:
     def test_returns_offense_and_defense(self):
         result = nfl_team_stats(team="KC", season=2024)
@@ -110,6 +114,8 @@ class TestNflTeamStats:
         assert len(result["offense"]) == 0
 
 
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
 class TestNflPlayerStats:
     def test_passing_stats(self):
         result = nfl_player_stats(player_name="P.Mahomes", stat_type="passing")
@@ -130,16 +136,14 @@ class TestNflPlayerStats:
         result = nfl_player_stats(player_name="J.Jefferson", stat_type="receiving")
         assert "error" not in result
 
-    def test_invalid_stat_type(self):
-        result = nfl_player_stats(player_name="Mahomes", stat_type="kicking")
-        assert "error" in result
-
     def test_unknown_player_returns_empty(self):
         result = nfl_player_stats(player_name="ZZZZNOTAPLAYER", stat_type="passing")
         assert "error" not in result
         assert len(result["seasons"]) == 0
 
 
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
 class TestNflCompare:
     def test_compare_teams(self):
         result = nfl_compare(entity1="KC", entity2="BAL", compare_type="team", season=2024)
@@ -157,6 +161,11 @@ class TestNflCompare:
         assert "error" not in result
         assert "P.Mahomes" in result
         assert "L.Jackson" in result
+
+class TestInputValidation:
+    def test_invalid_stat_type(self):
+        result = nfl_player_stats(player_name="Mahomes", stat_type="kicking")
+        assert "error" in result
 
     def test_invalid_compare_type(self):
         result = nfl_compare(entity1="KC", entity2="BAL", compare_type="coach")
