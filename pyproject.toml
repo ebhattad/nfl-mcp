@@ -1,0 +1,47 @@
+[project]
+name = "nfl-mcp"
+dynamic = ["version"]
+description = "MCP server for NFL play-by-play data (nflverse, 2013-2025)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["nfl", "mcp", "football", "sports", "analytics", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "mcp>=1.0",
+    "duckdb>=1.0",
+    "pyarrow>=14.0",
+    "nflreadpy>=0.1",
+    "polars>=0.20",
+    "click>=8.0",
+    "tqdm>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/ebhattad/nfl-mcp"
+Issues   = "https://github.com/ebhattad/nfl-mcp/issues"
+
+[project.scripts]
+nfl-mcp = "nfl_mcp.cli:main"
+
+[build-system]
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "nfl_mcp/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nfl_mcp"]
