@@ -10,7 +10,6 @@ import polars as pl
 from tqdm import tqdm
 
 ALL_SEASONS = list(range(2013, 2026))
-BATCH_SIZE = 2000
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -107,6 +106,39 @@ def _build_enhanced_description(row: dict) -> str:
     return " — ".join(parts)
 
 
+def _duckdb_type_for_polars(dtype: pl.DataType) -> str:
+    if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+        return "BIGINT"
+    if dtype in (pl.Float32, pl.Float64):
+        return "DOUBLE"
+    if dtype == pl.Boolean:
+        return "BOOLEAN"
+    if dtype == pl.Date:
+        return "DATE"
+    if dtype == pl.Time:
+        return "TIME"
+    if dtype == pl.Datetime:
+        return "TIMESTAMP"
+    return "VARCHAR"
+
+
+def _reconcile_plays_schema(conn: duckdb.DuckDBPyConnection, df: pl.DataFrame) -> None:
+    """Add any new incoming columns to plays before insert-by-name."""
+    existing_rows = conn.execute("PRAGMA table_info('plays')").fetchall()
+    existing_cols = {row[1] for row in existing_rows}
+
+    added_cols = []
+    for col_name, dtype in df.schema.items():
+        if col_name in existing_cols:
+            continue
+        duck_type = _duckdb_type_for_polars(dtype)
+        conn.execute(f'ALTER TABLE plays ADD COLUMN "{col_name}" {duck_type}')
+        added_cols.append(f"{col_name} ({duck_type})")
+
+    if added_cols:
+        print(f"    Added new columns: {', '.join(added_cols)}")
+
+
 # ── Table creation ─────────────────────────────────────────────────────────────
 
 def _get_loaded_seasons(conn: duckdb.DuckDBPyConnection) -> set[int]:
@@ -170,20 +202,19 @@ def _ingest_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
     safe_cols = {c: _safe_col(c) for c in df.columns}
     df = df.rename(safe_cols)
 
-    # Build enhanced descriptions in batches
+    # Build enhanced descriptions without materializing full row dicts.
     total = len(df)
-    orig_col_names = list(safe_cols.values())
-
-    all_descriptions = []
-    rows_dicts = df.to_dicts()
-    for row in tqdm(rows_dicts, desc=f"    {season} descriptions"):
-        all_descriptions.append(_build_enhanced_description(row))
+    all_descriptions = [
+        _build_enhanced_description(row)
+        for row in tqdm(df.iter_rows(named=True), total=total, desc=f"    {season} descriptions")
+    ]
 
     df = df.with_columns(pl.Series("enhanced_description", all_descriptions))
+    _reconcile_plays_schema(conn, df)
 
     # Insert into DuckDB via Arrow registration
     conn.register("_ingest_df", df.to_arrow())
-    conn.execute("INSERT INTO plays SELECT * FROM _ingest_df")
+    conn.execute("INSERT INTO plays BY NAME SELECT * FROM _ingest_df")
     conn.unregister("_ingest_df")
     print(f"    {total:,} rows inserted")
     return total
@@ -347,6 +378,9 @@ def run_ingest(
 ):
     import nflreadpy
     from .config import get_duckdb_path
+
+    if start > end:
+        raise ValueError("start must be less than or equal to end")
 
     path = db_path or str(get_duckdb_path())
     seasons = [s for s in ALL_SEASONS if start <= s <= end]

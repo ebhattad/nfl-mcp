@@ -45,3 +45,8 @@ path = "nfl_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nfl_mcp"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require a loaded local DuckDB dataset",
+]

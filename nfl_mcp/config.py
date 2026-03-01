@@ -7,6 +7,7 @@ DuckDB database lives at ~/.nfl-mcp/nflread.duckdb by default.
 
 import json
 import os
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,23 @@ def ensure_config_dir() -> Path:
 def load_config() -> dict[str, Any]:
     """Load config from disk, falling back to defaults."""
     if CONFIG_FILE.exists():
-        with open(CONFIG_FILE) as f:
-            stored = json.load(f)
-        return {**_DEFAULT_CONFIG, **stored}
+        try:
+            with open(CONFIG_FILE) as f:
+                stored = json.load(f)
+            return {**_DEFAULT_CONFIG, **stored}
+        except json.JSONDecodeError:
+            ensure_config_dir()
+            backup = CONFIG_FILE.with_suffix(".json.broken")
+            try:
+                CONFIG_FILE.replace(backup)
+                backup_note = f" Backed up to {backup}."
+            except OSError:
+                backup_note = ""
+            warnings.warn(
+                f"Malformed config at {CONFIG_FILE}.{backup_note} "
+                "Falling back to defaults; run 'nfl-mcp init' to regenerate config."
+            )
+            return {**_DEFAULT_CONFIG}
     return {**_DEFAULT_CONFIG}
 
 
