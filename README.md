@@ -145,17 +145,6 @@ pytest
 - If tools return database errors, run `nfl-mcp ingest` (or rerun `nfl-mcp init`) to ensure `plays` is loaded.
 - You can override the DB location with `NFL_MCP_DB_PATH=/path/to/nflread.duckdb`.
 
-## Branch + PR Enforcement (GitHub)
-
-To force branch-based contributions and test-gated merges on `main`, set these in **GitHub → Settings → Rules/Branches**:
-
-- Require a pull request before merging
-- Require approvals (at least 1)
-- Require conversation resolution before merging
-- Require status checks to pass before merging: select `CI / test`
-- Require branches to be up to date before merging
-- Restrict who can push to matching branches (or block direct pushes to `main` entirely)
-
 ## License
 
 MIT
