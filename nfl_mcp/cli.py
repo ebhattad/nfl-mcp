@@ -35,25 +35,71 @@ def serve():
 # ── ingest ─────────────────────────────────────────────────────────────────────
 
 @main.command()
-@click.option("--start",      default=2013, show_default=True,
-              type=click.IntRange(2013, 2025),
-              help="First season to load (2013–2025).")
-@click.option("--end",        default=2025, show_default=True,
-              type=click.IntRange(2013, 2025),
-              help="Last season to load (inclusive).")
+@click.option("--dataset", "datasets", multiple=True, default=["default"],
+              metavar="NAME",
+              help=(
+                  "Dataset(s) to load. Pass multiple times or use 'all' / 'default'. "
+                  "Run with --list to see all available names."
+              ))
+@click.option("--start",      default=None, type=click.IntRange(2013, 2025),
+              help="First season to load. Omit to load all available seasons.")
+@click.option("--end",        default=None, type=click.IntRange(2013, 2025),
+              help="Last season to load (inclusive). Omit to load all available seasons.")
 @click.option("--fresh",      is_flag=True,
-              help="Drop and recreate the plays table before ingesting.")
+              help="Re-ingest even if dataset+season is already recorded as loaded.")
 @click.option("--skip-views", is_flag=True,
-              help="Skip rebuilding aggregate tables.")
-def ingest(start, end, fresh, skip_views):
-    """Download NFL play-by-play data via nflreadpy and load into DuckDB.
+              help="Skip rebuilding PBP aggregate tables.")
+@click.option("--list", "list_datasets", is_flag=True,
+              help="Print all available dataset names and exit.")
+def ingest(datasets, start, end, fresh, skip_views, list_datasets):
+    """Download NFL data via nflreadpy and load into DuckDB.
 
-    Run 'nfl-mcp init' first if you haven't set up yet.
+    Examples:
+      nfl-mcp ingest                          # default datasets, all seasons
+      nfl-mcp ingest --dataset all            # every dataset, all seasons
+      nfl-mcp ingest --dataset schedules      # one dataset, all seasons
+      nfl-mcp ingest --dataset pbp --start 2020 --end 2024
+      nfl-mcp ingest --list                   # show all dataset names
     """
-    if start > end:
+    from .registry import REGISTRY, DEFAULT_DATASETS, ALL_DATASETS
+
+    if list_datasets:
+        click.echo("\nAvailable datasets:\n")
+        for ds_id, defn in REGISTRY.items():
+            marker = "[default]" if defn.default else f"[wave {defn.wave}]"
+            click.echo(f"  {ds_id:<35} {marker}  {defn.description}")
+        click.echo()
+        return
+
+    if start is not None and end is not None and start > end:
         raise click.UsageError("--start must be less than or equal to --end.")
-    from .ingest import run_ingest
-    run_ingest(start=start, end=end, fresh=fresh, skip_views=skip_views)
+
+    # Resolve dataset aliases
+    resolved: list[str] = []
+    for name in datasets:
+        if name == "all":
+            resolved = ALL_DATASETS
+            break
+        elif name == "default":
+            resolved.extend(DEFAULT_DATASETS)
+        elif name in REGISTRY:
+            resolved.append(name)
+        else:
+            raise click.UsageError(
+                f"Unknown dataset '{name}'. Run 'nfl-mcp ingest --list' to see options."
+            )
+    # Deduplicate, preserve order
+    seen: set[str] = set()
+    dataset_ids = [d for d in resolved if not (d in seen or seen.add(d))]
+
+    from .ingest import run_ingest_datasets
+    run_ingest_datasets(
+        dataset_ids=dataset_ids,
+        start=start,
+        end=end,
+        fresh=fresh,
+        skip_views=skip_views,
+    )
 
 
 # ── init ───────────────────────────────────────────────────────────────────────
@@ -101,8 +147,15 @@ def init(start, end, skip_ingest):
 
     if not skip_ingest:
         click.echo()
-        from .ingest import run_ingest
-        run_ingest(start=start, end=end, fresh=False, skip_views=False)
+        from .ingest import run_ingest_datasets
+        from .registry import DEFAULT_DATASETS
+        run_ingest_datasets(
+            dataset_ids=DEFAULT_DATASETS,
+            start=start,
+            end=end,
+            fresh=False,
+            skip_views=False,
+        )
 
     # ── 4. Set up IDE client ───────────────────────────────────────────────
     click.echo()
