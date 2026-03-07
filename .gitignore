@@ -23,6 +23,11 @@ venv/
 # OS
 .DS_Store
 
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
 # DuckDB local databases
 *.duckdb
 *.duckdb.wal

@@ -50,7 +50,7 @@ pip install -e ".[dev]"
 pytest
 
 # Run only unit tests (no DB required)
-pytest -m "not integration"
+pytest -m unit
 
 # Run with coverage (configured in pyproject.toml, runs automatically)
 pytest

@@ -48,6 +48,7 @@ packages = ["nfl_mcp"]
 
 [tool.pytest.ini_options]
 markers = [
+    "unit: unit tests that do not require a loaded local DuckDB dataset",
     "integration: tests that require a loaded local DuckDB dataset",
 ]
 addopts = "--cov=nfl_mcp --cov-report=term-missing --cov-report=xml"

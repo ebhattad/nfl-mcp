@@ -72,7 +72,7 @@
   - `nfl-mcp refresh --dataset ...`
   - `nfl-mcp status --dataset ...`
 - Add health checks per dataset in `doctor`.
-- Add CI job profile(s): no-db unit, pbp-e2e, full multi-dataset smoke.
+- Add CI job profile(s): no-db unit, pbp-integration, full multi-dataset smoke.
 
 ### Phase E — TUI UX
 - Build a curses/textual-based TUI prototype:
@@ -138,7 +138,7 @@ Local-only eval harness (not run in CI, no API key required from contributors) f
 5. MCP tool registry + domain tool rollout
 6. CLI dataset-oriented commands and doctor/status updates
 7. Observability and metadata/freshness reporting
-8. Test matrix expansion (unit, db-e2e, multi-dataset smoke)
+8. Test matrix expansion (unit, db-integration, multi-dataset smoke)
 9. Documentation and migration guide
 10. TUI MVP
 11. CLI agent compatibility layer
