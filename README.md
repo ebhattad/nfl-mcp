@@ -137,6 +137,8 @@ pip install -e ".[dev]"
 
 nfl-mcp init --start 2024 --end 2024
 pytest
+pytest -m unit     # unit tests
+pytest -m integration  # integration tests (requires loaded DB)
 ```
 
 ## Troubleshooting
