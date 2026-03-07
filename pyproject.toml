@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "mypy"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
 
 [project.urls]
 Homepage = "https://github.com/ebhattad/nfl-mcp"
@@ -50,4 +50,14 @@ packages = ["nfl_mcp"]
 markers = [
     "unit: unit tests that do not require a loaded local DuckDB dataset",
     "integration: tests that require a loaded local DuckDB dataset",
+]
+addopts = "--cov=nfl_mcp --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+omit = ["nfl_mcp/schema_pbp.py"]  # pure data, no logic to cover
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
 ]

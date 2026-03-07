@@ -1,10 +1,13 @@
 """
-NFL play-by-play ingestion into DuckDB.
+NFL data ingestion into DuckDB.
 
-Uses native Polars → DuckDB path for fast bulk loading.
-Called by: nfl-mcp init / nfl-mcp ingest (when backend=duckdb)
+Supports all nflreadpy datasets via a declarative registry.
+PBP ingestion preserves its existing enhanced_description logic.
+
+Called by: nfl-mcp init / nfl-mcp ingest
 """
 
+import datetime
 import duckdb
 import polars as pl
 from tqdm import tqdm
@@ -18,12 +21,98 @@ def _safe_col(name: str) -> str:
     return name.replace(".", "_").replace(" ", "_").replace("-", "_")
 
 
+def _safe_rename(df: pl.DataFrame) -> pl.DataFrame:
+    return df.rename({c: _safe_col(c) for c in df.columns})
+
+
 def _str(val) -> str:
     if val is None:
         return ""
     s = str(val)
     return "" if s in ("None", "nan", "NaN", "") else s
 
+
+def _duckdb_type_for_polars(dtype: pl.DataType) -> str:
+    if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+                 pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+        return "BIGINT"
+    if dtype in (pl.Float32, pl.Float64):
+        return "DOUBLE"
+    if dtype == pl.Boolean:
+        return "BOOLEAN"
+    if dtype == pl.Date:
+        return "DATE"
+    if dtype == pl.Time:
+        return "TIME"
+    if dtype == pl.Datetime:
+        return "TIMESTAMP"
+    return "VARCHAR"
+
+
+# ── Metadata table ─────────────────────────────────────────────────────────────
+
+def _ensure_metadata_table(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create _ingest_metadata if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _ingest_metadata (
+            dataset_id  VARCHAR NOT NULL,
+            table_name  VARCHAR NOT NULL,
+            season      INTEGER,          -- NULL for static (non-seasonal) datasets
+            row_count   BIGINT,
+            loaded_at   TIMESTAMP NOT NULL,
+            loader_fn   VARCHAR
+        )
+    """)
+
+
+def _is_loaded(conn: duckdb.DuckDBPyConnection, dataset_id: str, season: int | None = None) -> bool:
+    """Return True if this dataset (+ season) is already recorded in metadata."""
+    try:
+        if season is None:
+            result = conn.execute(
+                "SELECT COUNT(*) FROM _ingest_metadata WHERE dataset_id = ? AND season IS NULL",
+                [dataset_id],
+            ).fetchone()
+        else:
+            result = conn.execute(
+                "SELECT COUNT(*) FROM _ingest_metadata WHERE dataset_id = ? AND season = ?",
+                [dataset_id, season],
+            ).fetchone()
+        return (result[0] or 0) > 0
+    except duckdb.CatalogException:
+        return False
+
+
+def _record_loaded(
+    conn: duckdb.DuckDBPyConnection,
+    dataset_id: str,
+    table_name: str,
+    loader_fn: str,
+    row_count: int,
+    season: int | None = None,
+) -> None:
+    """Upsert a completion record into _ingest_metadata."""
+    # Delete any prior record for this dataset+season before inserting fresh
+    if season is None:
+        conn.execute(
+            "DELETE FROM _ingest_metadata WHERE dataset_id = ? AND season IS NULL",
+            [dataset_id],
+        )
+    else:
+        conn.execute(
+            "DELETE FROM _ingest_metadata WHERE dataset_id = ? AND season = ?",
+            [dataset_id, season],
+        )
+    conn.execute(
+        """
+        INSERT INTO _ingest_metadata (dataset_id, table_name, season, row_count, loaded_at, loader_fn)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [dataset_id, table_name, season, row_count, datetime.datetime.now(datetime.timezone.utc), loader_fn],
+    )
+
+
+# ── PBP-specific helpers (preserved from original) ────────────────────────────
 
 def _build_enhanced_description(row: dict) -> str:
     parts = []
@@ -106,66 +195,35 @@ def _build_enhanced_description(row: dict) -> str:
     return " — ".join(parts)
 
 
-def _duckdb_type_for_polars(dtype: pl.DataType) -> str:
-    if dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
-        return "BIGINT"
-    if dtype in (pl.Float32, pl.Float64):
-        return "DOUBLE"
-    if dtype == pl.Boolean:
-        return "BOOLEAN"
-    if dtype == pl.Date:
-        return "DATE"
-    if dtype == pl.Time:
-        return "TIME"
-    if dtype == pl.Datetime:
-        return "TIMESTAMP"
-    return "VARCHAR"
-
-
-def _reconcile_plays_schema(conn: duckdb.DuckDBPyConnection, df: pl.DataFrame) -> None:
-    """Add any new incoming columns to plays before insert-by-name."""
-    existing_rows = conn.execute("PRAGMA table_info('plays')").fetchall()
+def _reconcile_schema(conn: duckdb.DuckDBPyConnection, table: str, df: pl.DataFrame) -> None:
+    """Add any new incoming columns to an existing table before insert-by-name."""
+    existing_rows = conn.execute(f"PRAGMA table_info('{table}')").fetchall()
     existing_cols = {row[1] for row in existing_rows}
 
-    added_cols = []
+    added = []
     for col_name, dtype in df.schema.items():
         if col_name in existing_cols:
             continue
         duck_type = _duckdb_type_for_polars(dtype)
-        conn.execute(f'ALTER TABLE plays ADD COLUMN "{col_name}" {duck_type}')
-        added_cols.append(f"{col_name} ({duck_type})")
+        conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col_name}" {duck_type}')
+        added.append(f"{col_name} ({duck_type})")
 
-    if added_cols:
-        print(f"    Added new columns: {', '.join(added_cols)}")
-
-
-# ── Table creation ─────────────────────────────────────────────────────────────
-
-def _get_loaded_seasons(conn: duckdb.DuckDBPyConnection) -> set[int]:
-    try:
-        result = conn.execute(
-            "SELECT DISTINCT season FROM plays WHERE season IS NOT NULL"
-        ).fetchall()
-        return {row[0] for row in result}
-    except duckdb.CatalogException:
-        return set()
+    if added:
+        print(f"    Schema drift: added {', '.join(added)}")
 
 
-def _create_table(conn: duckdb.DuckDBPyConnection, sample_df: pl.DataFrame, fresh: bool = False):
+# ── PBP ingestion (season-by-season with enhanced_description) ─────────────────
+
+def _create_plays_table(conn: duckdb.DuckDBPyConnection, sample_df: pl.DataFrame, fresh: bool = False):
     if fresh:
         conn.execute("DROP TABLE IF EXISTS plays")
         print("  Dropped existing plays table")
 
-    # Rename columns to safe names in the DataFrame
-    safe_cols = {c: _safe_col(c) for c in sample_df.columns}
-    renamed = sample_df.head(0).rename(safe_cols)
-
-    # Create table from schema of the renamed DataFrame + extra columns
+    renamed = _safe_rename(sample_df.head(0))
     try:
         conn.execute("SELECT 1 FROM plays LIMIT 0")
         print("  plays table already exists")
     except duckdb.CatalogException:
-        # Register the empty frame so DuckDB can see it, then CREATE TABLE from it
         conn.register("_schema_df", renamed.to_arrow())
         conn.execute(
             "CREATE TABLE plays AS "
@@ -175,11 +233,8 @@ def _create_table(conn: duckdb.DuckDBPyConnection, sample_df: pl.DataFrame, fres
         print(f"  plays table created — {len(sample_df.columns) + 1} columns")
 
 
-# ── Season ingestion ───────────────────────────────────────────────────────────
-
-def _ingest_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
+def _ingest_pbp_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
     import nflreadpy
-
     print(f"\n  {season}")
     try:
         df = nflreadpy.load_pbp([season])
@@ -198,21 +253,15 @@ def _ingest_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
     if dropped:
         print(f"    Filtered {dropped:,} rows (null posteam/defteam)")
 
-    # Rename columns to safe names
-    safe_cols = {c: _safe_col(c) for c in df.columns}
-    df = df.rename(safe_cols)
-
-    # Build enhanced descriptions without materializing full row dicts.
+    df = _safe_rename(df)
     total = len(df)
-    all_descriptions = [
+    descriptions = [
         _build_enhanced_description(row)
         for row in tqdm(df.iter_rows(named=True), total=total, desc=f"    {season} descriptions")
     ]
+    df = df.with_columns(pl.Series("enhanced_description", descriptions))
 
-    df = df.with_columns(pl.Series("enhanced_description", all_descriptions))
-    _reconcile_plays_schema(conn, df)
-
-    # Insert into DuckDB via Arrow registration
+    _reconcile_schema(conn, "plays", df)
     conn.register("_ingest_df", df.to_arrow())
     conn.execute("INSERT INTO plays BY NAME SELECT * FROM _ingest_df")
     conn.unregister("_ingest_df")
@@ -220,7 +269,112 @@ def _ingest_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
     return total
 
 
-# ── Aggregate tables (replacement for PostgreSQL materialized views) ───────────
+# ── Generic dataset ingestion ──────────────────────────────────────────────────
+
+def _write_df_to_table(
+    conn: duckdb.DuckDBPyConnection,
+    table: str,
+    df: pl.DataFrame,
+    replace: bool = False,
+) -> None:
+    """Create or append df into a DuckDB table."""
+    if replace:
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+    try:
+        conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+        _reconcile_schema(conn, table, df)
+        conn.register("_load_df", df.to_arrow())
+        conn.execute(f"INSERT INTO {table} BY NAME SELECT * FROM _load_df")
+        conn.unregister("_load_df")
+    except duckdb.CatalogException:
+        conn.register("_load_df", df.to_arrow())
+        conn.execute(f"CREATE TABLE {table} AS SELECT * FROM _load_df")
+        conn.unregister("_load_df")
+
+
+def _ingest_generic_dataset(
+    conn: duckdb.DuckDBPyConnection,
+    dataset_def,                        # DatasetDef from registry
+    seasons: list[int] | None,          # None = load all via seasons=True
+    fresh: bool = False,
+) -> int:
+    """Load a single dataset (non-pbp) into DuckDB. Returns total rows inserted."""
+    import nflreadpy
+
+    loader = getattr(nflreadpy, dataset_def.loader_fn)
+    table = dataset_def.table_name
+    total_rows = 0
+    bulk_mode = seasons is None  # pass True to loader instead of per-season list
+
+    if not dataset_def.seasonal:
+        # Static dataset — one load, replace table
+        print(f"\n  {dataset_def.dataset_id} (static)")
+
+        if _is_loaded(conn, dataset_def.dataset_id) and not fresh:
+            print(f"    Already loaded, skipping")
+            return 0
+
+        try:
+            df = loader(**dataset_def.extra_params)
+        except Exception as e:
+            print(f"    Failed to load: {e}")
+            return 0
+
+        if df is None or len(df) == 0:
+            print(f"    No data returned")
+            return 0
+
+        df = _safe_rename(df)
+        print(f"    {len(df):,} rows, {len(df.columns)} columns")
+        _write_df_to_table(conn, table, df, replace=True)
+        _record_loaded(conn, dataset_def.dataset_id, table, dataset_def.loader_fn, len(df))
+        total_rows = len(df)
+
+    else:
+        # Seasonal dataset — iterate per season (bulk mode uses ALL_SEASONS)
+        season_list = ALL_SEASONS if bulk_mode else seasons
+        for season in season_list:
+            # Skip seasons outside the dataset's known coverage window
+            if dataset_def.min_season and season < dataset_def.min_season:
+                continue
+            if dataset_def.max_season and season > dataset_def.max_season:
+                continue
+
+            if _is_loaded(conn, dataset_def.dataset_id, season) and not fresh:
+                print(f"    {dataset_def.dataset_id} {season}: already loaded, skipping")
+                continue
+
+            print(f"\n  {dataset_def.dataset_id} {season}")
+            try:
+                df = loader([season], **dataset_def.extra_params)
+            except Exception as e:
+                print(f"    Failed to load: {e}")
+                continue
+
+            if df is None or len(df) == 0:
+                print(f"    No data returned")
+                continue
+
+            df = _safe_rename(df)
+            print(f"    {len(df):,} rows, {len(df.columns)} columns")
+
+            if fresh:
+                # Remove stale rows for this season before re-inserting
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE season = {season}")
+                except Exception:
+                    pass
+
+            _write_df_to_table(conn, table, df)
+            _record_loaded(conn, dataset_def.dataset_id, table, dataset_def.loader_fn, len(df), season)
+            total_rows += len(df)
+            print(f"    {len(df):,} rows inserted")
+
+    return total_rows
+
+
+# ── Aggregate tables (pbp-derived) ────────────────────────────────────────────
 
 _SITUATION_EXPR = """
     CASE
@@ -348,8 +502,6 @@ def _create_aggregate_tables(conn: duckdb.DuckDBPyConnection):
     print("  Aggregate tables done")
 
 
-# ── Indexes ────────────────────────────────────────────────────────────────────
-
 def _create_indexes(conn: duckdb.DuckDBPyConnection):
     print("\n  Creating indexes…")
     for idx_sql in [
@@ -367,7 +519,111 @@ def _create_indexes(conn: duckdb.DuckDBPyConnection):
     print("  Indexes done")
 
 
-# ── Public entry point ─────────────────────────────────────────────────────────
+# ── Public entry points ────────────────────────────────────────────────────────
+
+def run_ingest_datasets(
+    dataset_ids: list[str],
+    start: int | None = None,
+    end: int | None = None,
+    fresh: bool = False,
+    skip_views: bool = False,
+    db_path: str | None = None,
+) -> None:
+    """
+    Ingest one or more datasets into DuckDB.
+
+    dataset_ids: list of keys from REGISTRY (e.g. ["pbp", "schedules"])
+    start/end:   season range; if both are None, loads all available seasons.
+    """
+    import nflreadpy
+    from .config import get_duckdb_path
+    from .registry import REGISTRY
+
+    bulk_mode = start is None and end is None
+    if not bulk_mode:
+        start = start or 2013
+        end = end or 2025
+        if start > end:
+            raise ValueError("start must be less than or equal to end")
+
+    path = db_path or str(get_duckdb_path())
+    seasons: list[int] | None = None if bulk_mode else [s for s in ALL_SEASONS if start <= s <= end]
+
+    print("=" * 60)
+    print("NFL MCP — Multi-Dataset Ingest")
+    print("=" * 60)
+    print(f"Datasets : {', '.join(dataset_ids)}")
+    print(f"Seasons  : {'all available' if bulk_mode else f'{seasons[0]}–{seasons[-1]}'}")
+    print(f"Database : {path}")
+
+    from pathlib import Path
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(path)
+
+    _ensure_metadata_table(conn)
+
+    pbp_ingested = 0
+    has_pbp = "pbp" in dataset_ids
+
+    # ── PBP (special path — enhanced_description, null filtering) ──────────
+    if has_pbp:
+        print("\n── Play-by-play ──")
+
+        pbp_seasons = ALL_SEASONS if bulk_mode else seasons
+        schema_season = pbp_seasons[-1]
+        print(f"  Discovering schema from {schema_season}…")
+        sample_df = nflreadpy.load_pbp([schema_season])
+        print(f"  {len(sample_df.columns)} columns · {len(sample_df):,} rows")
+
+        _create_plays_table(conn, sample_df, fresh=fresh)
+
+        loaded_pbp = {
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT season FROM plays WHERE season IS NOT NULL"
+            ).fetchall()
+        } if not fresh else set()
+
+        to_ingest = [s for s in pbp_seasons if s not in loaded_pbp]
+        skipped   = [s for s in pbp_seasons if s in loaded_pbp]
+
+        if skipped:
+            print(f"  Already loaded, skipping: {skipped}")
+        if not to_ingest:
+            print("  All PBP seasons already loaded.")
+        else:
+            print(f"  Will ingest: {to_ingest}")
+            for season in to_ingest:
+                rows = _ingest_pbp_season(conn, season)
+                pbp_ingested += rows
+                if rows:
+                    _record_loaded(conn, "pbp", "plays", "load_pbp", rows, season)
+
+        _create_indexes(conn)
+
+        if not skip_views:
+            _create_aggregate_tables(conn)
+
+    # ── All other datasets ─────────────────────────────────────────────────
+    other_ids = [d for d in dataset_ids if d != "pbp"]
+    if other_ids:
+        print("\n── Additional datasets ──")
+        for dataset_id in other_ids:
+            defn = REGISTRY.get(dataset_id)
+            if defn is None:
+                print(f"\n  WARNING: unknown dataset '{dataset_id}', skipping")
+                continue
+            _ingest_generic_dataset(conn, defn, seasons, fresh=fresh)
+
+    conn.close()
+    print("\n" + "=" * 60)
+    print("Ingestion complete!")
+    if has_pbp and pbp_ingested:
+        print(f"  PBP plays ingested this run: {pbp_ingested:,}")
+    season_label = "all available" if bulk_mode else f"{seasons[0]}–{seasons[-1]}"
+    print(f"  Seasons: {season_label}")
+    print(f"  DB: {path}")
+    print("=" * 60)
+
 
 def run_ingest(
     start: int = 2013,
@@ -375,61 +631,13 @@ def run_ingest(
     fresh: bool = False,
     skip_views: bool = False,
     db_path: str | None = None,
-):
-    import nflreadpy
-    from .config import get_duckdb_path
-
-    if start > end:
-        raise ValueError("start must be less than or equal to end")
-
-    path = db_path or str(get_duckdb_path())
-    seasons = [s for s in ALL_SEASONS if start <= s <= end]
-
-    print("=" * 60)
-    print("NFL nflreadpy → DuckDB")
-    print("=" * 60)
-    print(f"Seasons requested: {seasons[0]}–{seasons[-1]}")
-    print(f"Database: {path}")
-
-    from pathlib import Path
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(path)
-
-    schema_season = seasons[-1]
-    print(f"\nDiscovering schema from {schema_season} season…")
-    sample_df = nflreadpy.load_pbp([schema_season])
-    print(f"  {len(sample_df.columns)} columns · {len(sample_df):,} rows")
-
-    _create_table(conn, sample_df, fresh=fresh)
-
-    loaded = _get_loaded_seasons(conn)
-    to_ingest = [s for s in seasons if s not in loaded]
-    skipped = [s for s in seasons if s in loaded]
-
-    if skipped:
-        print(f"\nAlready loaded, skipping: {skipped}")
-    if not to_ingest:
-        print("All requested seasons already loaded.")
-        conn.close()
-        return
-
-    print(f"Will ingest: {to_ingest}")
-
-    total = 0
-    for season in to_ingest:
-        total += _ingest_season(conn, season)
-
-    print(f"\nPlays ingested this run: {total:,}")
-
-    _create_indexes(conn)
-
-    if not skip_views:
-        _create_aggregate_tables(conn)
-
-    conn.close()
-    print("\n" + "=" * 60)
-    print("Ingestion complete!")
-    print(f"  DB:      {path}")
-    print(f"  Plays:   {total:,}")
-    print(f"  Seasons: {seasons[0]}–{seasons[-1]}")
-    print("=" * 60)
+) -> None:
+    """Backward-compatible entry point — ingests PBP only."""
+    run_ingest_datasets(
+        dataset_ids=["pbp"],
+        start=start,
+        end=end,
+        fresh=fresh,
+        skip_views=skip_views,
+        db_path=db_path,
+    )

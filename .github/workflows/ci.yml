@@ -26,8 +26,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install ".[dev]"
 
-      - name: Ingest 2024 data for E2E tests
-        run: nfl-mcp ingest --start 2024 --end 2024
+      - name: Ingest all datasets for E2E tests
+        run: nfl-mcp ingest --dataset all --start 2024 --end 2024
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: pytest -q
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
