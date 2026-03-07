@@ -1,6 +1,7 @@
 """
-NFL Play-by-Play MCP Server
-Tools: nfl_schema, nfl_status, nfl_query, nfl_search_plays, nfl_team_stats, nfl_player_stats, nfl_compare
+NFL MCP Server
+Tools: nfl_schema, nfl_status, nfl_query, nfl_search_plays, nfl_team_stats, nfl_player_stats, nfl_compare,
+       nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts
 """
 
 import asyncio
@@ -15,6 +16,7 @@ from mcp.types import TextContent, Tool
 from .tools import (
     nfl_schema, nfl_status, nfl_query, nfl_search_plays,
     nfl_team_stats, nfl_player_stats, nfl_compare,
+    nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +51,8 @@ TOOLS = [
         description=(
             "Returns the NFL database schema. By default returns a compact summary with "
             "key columns and available categories. Pass category='<name>' for full column "
-            "details on a specific section, or category='all' for everything."
+            "details on a specific section, or category='all' for everything. "
+            "Pass table='<name>' to get the live column list for any non-pbp table."
         ),
         inputSchema={
             "type": "object",
@@ -65,14 +68,17 @@ TOOLS = [
                         "game_stadium_weather, vegas, aggregate_tables, query_tips"
                     ),
                 },
+                "table": {
+                    "type": "string",
+                    "description": "Table name to inspect (e.g. 'rosters', 'injuries', 'schedules'). Returns live column list from the database.",
+                },
             },
         },
     ),
     Tool(
         name="nfl_status",
         description=(
-            "Returns database health info: total plays, loaded seasons (with season types), "
-            "and available tables. Call this to check what data is available before querying."
+            "Returns database health: play counts, loaded seasons, and a summary of all ingested datasets with row counts and last refresh time. Call this first to understand what data is available."
         ),
         inputSchema={"type": "object", "properties": {}},
     ),
@@ -289,6 +295,137 @@ TOOLS = [
             "required": ["entity1", "entity2"],
         },
     ),
+    Tool(
+        name="nfl_catalog",
+        description=(
+            "Returns a catalog of every dataset loaded into the local database: "
+            "table name, row count, seasons available, and when it was last refreshed. "
+            "Call this first to discover what data is available beyond play-by-play."
+        ),
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    Tool(
+        name="nfl_roster",
+        description=(
+            "PREFERRED for roster questions. Look up who was on a team's roster "
+            "in a given season. Returns name, position, jersey number, experience, "
+            "college, height, and weight. Filter by team, season, and/or position."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation (e.g. KC, PHI, BUF)",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Season year (e.g. 2024). Omit for all seasons.",
+                },
+                "position": {
+                    "type": "string",
+                    "description": "Position filter (e.g. QB, WR, LB). Partial match supported.",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="nfl_injuries",
+        description=(
+            "PREFERRED for injury report questions. Look up player injury status by "
+            "team, season, week, player name, or report status (Out, Questionable, "
+            "Doubtful, Full Participation). Returns primary/secondary injuries and "
+            "both report and practice statuses."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation (e.g. KC, PHI)",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Season year. Omit for all seasons.",
+                },
+                "week": {
+                    "type": "integer",
+                    "description": "Week number (1–22).",
+                },
+                "player": {
+                    "type": "string",
+                    "description": "Player name (partial match, e.g. 'Mahomes')",
+                },
+                "report_status": {
+                    "type": "string",
+                    "description": "Injury designation: 'Out', 'Questionable', 'Doubtful', 'Full Participation In Practice'",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="nfl_schedule",
+        description=(
+            "PREFERRED for schedule and game result questions. Look up games by team, "
+            "season, week, or season type. Returns scores, spread/total lines, "
+            "weather, stadium, coaches, and referee."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation — returns all games where team is home or away.",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Season year. Omit for all seasons.",
+                },
+                "week": {
+                    "type": "integer",
+                    "description": "Week number (1–22).",
+                },
+                "season_type": {
+                    "type": "string",
+                    "enum": ["REG", "POST", "SB"],
+                    "description": "Season type filter: REG, POST, or SB (Super Bowl).",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="nfl_snap_counts",
+        description=(
+            "PREFERRED for snap count questions. Look up how many offensive, defensive, "
+            "and special teams snaps a player or team unit played. Filter by player, "
+            "team, season, week, or position."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {
+                    "type": "string",
+                    "description": "Player name (partial match, e.g. 'Kelce')",
+                },
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation (e.g. KC, PHI)",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Season year. Omit for all seasons.",
+                },
+                "week": {
+                    "type": "integer",
+                    "description": "Week number (1–22).",
+                },
+                "position": {
+                    "type": "string",
+                    "description": "Position filter (e.g. TE, WR, CB).",
+                },
+            },
+        },
+    ),
 ]
 
 
@@ -309,6 +446,11 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         "nfl_team_stats":   nfl_team_stats,
         "nfl_player_stats": nfl_player_stats,
         "nfl_compare":      nfl_compare,
+        "nfl_catalog":      nfl_catalog,
+        "nfl_roster":       nfl_roster,
+        "nfl_injuries":     nfl_injuries,
+        "nfl_schedule":     nfl_schedule,
+        "nfl_snap_counts":  nfl_snap_counts,
     }
 
     try:
