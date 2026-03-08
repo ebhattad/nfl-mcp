@@ -1,10 +1,13 @@
 """Tests for the structured MCP tools."""
 
 import pytest
+import duckdb
+from unittest.mock import patch
 from nfl_mcp.tools import (
     nfl_schema, nfl_status, nfl_search_plays, nfl_team_stats,
     nfl_player_stats, nfl_compare, nfl_query,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
+    nfl_fantasy_opportunity,
 )
 
 
@@ -375,6 +378,34 @@ class TestNflSnapCounts:
             row = result["snap_counts"][0]
             for field in ("player", "position", "team", "season", "week", "offense_snaps", "offense_pct"):
                 assert field in row
+
+
+class TestNflFantasyOpportunity:
+    def test_no_filters_returns_results(self):
+        result = nfl_fantasy_opportunity(season=2024)
+        assert "error" not in result
+
+    def test_filter_by_player(self):
+        result = nfl_fantasy_opportunity(player="Jefferson", season=2024)
+        assert "error" not in result
+
+    def test_filter_by_team_and_position(self):
+        result = nfl_fantasy_opportunity(team="KC", position="WR", season=2024)
+        assert "error" not in result
+
+    def test_missing_table_returns_error_not_crash(self):
+        result = nfl_fantasy_opportunity(season=2099)
+        assert isinstance(result, dict)
+
+    def test_filter_by_week(self):
+        result = nfl_fantasy_opportunity(team="KC", season=2024, week=1)
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_fantasy_opportunity(season=2024)
+        assert "error" in result
+        assert "boom" in result["error"]
 
 
 class TestInputValidation:

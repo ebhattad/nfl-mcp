@@ -15,15 +15,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Build distributions
-        run: |
-          python -m pip install --upgrade build
-          python -m build
+        run: uv build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

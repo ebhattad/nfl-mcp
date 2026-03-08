@@ -700,8 +700,58 @@ def nfl_snap_counts(
         return {"error": str(e)}
 
 
+def nfl_fantasy_opportunity(
+    player: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    week: int | None = None,
+    position: str | None = None,
+) -> Dict[str, Any]:
+    """
+    Look up fantasy football opportunity data — target share, air yards share,
+    carry share, and opportunity scores per player per week. Available 2006–present.
+    """
+    conditions, params = [], []
+    if player:
+        conditions.append("full_name ILIKE ?")
+        params.append(f"%{player}%")
+    if team:
+        conditions.append("posteam = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+    if week:
+        conditions.append("week = ?")
+        params.append(int(week))
+    if position:
+        conditions.append("position ILIKE ?")
+        params.append(position.upper())
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT season, week, posteam, full_name, position, player_id,
+               rec_attempt, rush_attempt, rec_air_yards,
+               receptions, receptions_exp, rec_yards_gained, rush_yards_gained,
+               rec_touchdown, rush_touchdown,
+               total_fantasy_points, total_fantasy_points_exp, total_fantasy_points_diff,
+               rec_attempt_team, rush_attempt_team
+        FROM ff_opportunity
+        WHERE {where}
+        ORDER BY season DESC, week DESC, total_fantasy_points_exp DESC NULLS LAST
+        LIMIT 500
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"fantasy_opportunity": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
 __all__ = [
     "nfl_schema", "nfl_status", "nfl_query",
     "nfl_search_plays", "nfl_team_stats", "nfl_player_stats", "nfl_compare",
     "nfl_catalog", "nfl_roster", "nfl_injuries", "nfl_schedule", "nfl_snap_counts",
+    "nfl_fantasy_opportunity",
 ]
