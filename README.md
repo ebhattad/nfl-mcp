@@ -15,10 +15,10 @@ Ask Claude questions like:
 
 ```bash
 pip install nfl-mcp        # or: uvx nfl-mcp
-nfl-mcp init               # configure + load default datasets
+nfl-mcp init               # configure, load data, and start the server
 ```
 
-No database server to install. No credentials to manage. Data is stored locally in DuckDB.
+`init` walks you through setup and offers to start the server immediately when done. No database server to install. No credentials to manage. Data is stored locally in DuckDB.
 
 ## Prerequisites
 
@@ -37,6 +37,7 @@ The wizard will:
 1. Configure the local DuckDB database path
 2. Download the default NFL datasets (play-by-play, rosters, stats, injuries, and more)
 3. Auto-configure your IDE (Claude Desktop and/or VS Code)
+4. Offer to start the server immediately
 
 Options:
 
@@ -44,7 +45,21 @@ Options:
 --skip-ingest       Configure without loading data
 ```
 
-### 2. Verify
+### 2. Start the server
+
+`init` offers to start the server for you. If you need to start it manually later:
+
+```bash
+nfl-mcp serve
+nfl-mcp serve --port 9000
+nfl-mcp serve --host 0.0.0.0
+```
+
+The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`.
+
+> **Note:** The server must be running for your IDE to connect. Run `nfl-mcp serve` in a terminal and keep it open.
+
+### 3. Verify
 
 ```bash
 nfl-mcp doctor
@@ -52,7 +67,7 @@ nfl-mcp doctor
 
 Checks database connectivity, loaded data, and IDE configuration.
 
-### 3. Manual client configuration (optional)
+### 4. Manual client configuration (optional)
 
 If you skipped IDE setup during init, or need to reconfigure:
 
@@ -62,14 +77,25 @@ nfl-mcp setup-client --client vscode    # VS Code only
 nfl-mcp setup-client --client claude-desktop
 ```
 
-Or configure manually — add to `.vscode/mcp.json`:
+Or configure manually. Add to `.vscode/mcp.json` (VS Code):
 
 ```json
 {
   "servers": {
     "nfl": {
-      "command": "uvx",
-      "args": ["nfl-mcp", "serve"]
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "nfl": {
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
@@ -79,10 +105,18 @@ Or configure manually — add to `.vscode/mcp.json`:
 
 ```
 nfl-mcp init               Interactive setup wizard
-nfl-mcp serve              Start the MCP server (stdio)
+nfl-mcp serve              Start the MCP server (Streamable HTTP, default port 8000)
 nfl-mcp ingest             Load NFL data into the database
 nfl-mcp setup-client       Configure IDE MCP clients
 nfl-mcp doctor             Health check
+```
+
+### Serve options
+
+```bash
+nfl-mcp serve
+nfl-mcp serve --port 9000
+nfl-mcp serve --host 0.0.0.0
 ```
 
 ### Ingestion options
@@ -176,6 +210,7 @@ cd nfl-mcp
 pip install -e ".[dev]"
 
 nfl-mcp ingest --dataset all --start 2024 --end 2024
+nfl-mcp serve   # server available at http://localhost:8000/mcp
 pytest
 pytest -m unit     # unit tests
 pytest -m integration  # integration tests (requires loaded DB)

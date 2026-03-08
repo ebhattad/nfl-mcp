@@ -18,26 +18,32 @@ def runner():
 # ── serve ───────────────────────────────────────────────────────────────────────
 
 class TestServe:
-    def test_serve_invokes_async_server_run(self, runner, monkeypatch):
+    def test_serve_starts_uvicorn(self, runner, monkeypatch):
         called = {}
 
-        async def fake_server_run():
-            called["server_run"] = True
+        def fake_uvicorn_run(app, host, port):
+            called["host"] = host
+            called["port"] = port
 
-        def fake_asyncio_run(coro):
-            import asyncio as _asyncio
-            loop = _asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(coro)
-            finally:
-                loop.close()
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", fake_uvicorn_run)
 
-        monkeypatch.setattr("nfl_mcp.server.run", fake_server_run)
-        monkeypatch.setattr("nfl_mcp.cli.asyncio.run", fake_asyncio_run)
-
-        result = runner.invoke(main, ["serve"])
+        result = runner.invoke(main, ["serve", "--host", "127.0.0.1", "--port", "9000"])
         assert result.exit_code == 0
-        assert called.get("server_run") is True
+        assert called.get("host") == "127.0.0.1"
+        assert called.get("port") == 9000
+
+    def test_serve_default_host_is_localhost(self, runner, monkeypatch):
+        called = {}
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: called.update(host=host))
+        runner.invoke(main, ["serve"])
+        assert called.get("host") == "127.0.0.1"
+
+    def test_serve_prints_localhost_url_when_binding_all_interfaces(self, runner, monkeypatch):
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: None)
+        result = runner.invoke(main, ["serve", "--host", "0.0.0.0", "--port", "8000"])
+        assert result.exit_code == 0
+        assert "localhost:8000" in result.output
+        assert "all interfaces" in result.output
 
 
 # ── ingest --list ──────────────────────────────────────────────────────────────
@@ -185,11 +191,11 @@ class TestInitAndSetupClient:
         )
         monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: setup_calls.append(cfg))
 
-        # Prompts: change DB path? -> no ; configure client? -> no
+        # Prompts: change DB path? -> no ; configure client? -> no ; start server? -> no
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024", "--skip-ingest"],
-            input="n\nn\n",
+            input="n\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -209,7 +215,7 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--skip-ingest"],
-            input="y\n/tmp/custom-nfl.duckdb\nn\n",
+            input="y\n/tmp/custom-nfl.duckdb\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -234,11 +240,11 @@ class TestInitAndSetupClient:
         )
         monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: None)
 
-        # Prompts: change DB path? -> no ; ingest now? -> default yes ; configure client? -> no
+        # Prompts: change DB path? -> no ; ingest now? -> default yes ; configure client? -> no ; start server? -> no
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024"],
-            input="n\n\nn\n",
+            input="n\n\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -258,7 +264,7 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024"],
-            input="n\nn\nn\n",
+            input="n\nn\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -273,11 +279,28 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--skip-ingest"],
-            input="n\ny\n",
+            input="n\ny\nn\n",
         )
 
         assert result.exit_code == 0
         assert len(setup_calls) == 1
+
+    def test_init_starts_server_when_confirmed(self, runner, monkeypatch, tmp_path):
+        uvicorn_calls = []
+        monkeypatch.setattr("nfl_mcp.config.load_config", lambda: {})
+        monkeypatch.setattr("nfl_mcp.config.save_config", lambda cfg: tmp_path / "config.json")
+        monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: None)
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: uvicorn_calls.append((host, port)))
+
+        # Prompts: change DB path? -> no ; configure client? -> no ; start server? -> yes
+        result = runner.invoke(
+            main,
+            ["init", "--skip-ingest"],
+            input="n\nn\ny\n",
+        )
+
+        assert result.exit_code == 0
+        assert uvicorn_calls == [("127.0.0.1", 8000)]
 
     def test_setup_client_routes_auto(self, runner, monkeypatch):
         called = []
@@ -329,34 +352,17 @@ class TestCliHelpers:
         cli._setup_client_interactive({"duckdb_path": "/tmp/db.duckdb"})
         assert configured == ["vscode"]
 
-    def test_resolve_server_command_prefers_uvx(self, monkeypatch):
-        monkeypatch.setattr(
-            "nfl_mcp.cli.shutil.which",
-            lambda name: "/usr/local/bin/uvx" if name == "uvx" else None,
-        )
-        cmd, args = cli._resolve_server_command()
-        assert cmd == "uvx"
-        assert args == ["nfl-mcp", "serve"]
-
-    def test_resolve_server_command_uses_nfl_mcp_binary_when_uvx_missing(self, monkeypatch):
-        monkeypatch.setattr(
-            "nfl_mcp.cli.shutil.which",
-            lambda name: "/usr/local/bin/nfl-mcp" if name == "nfl-mcp" else None,
-        )
-        cmd, args = cli._resolve_server_command()
-        assert cmd == "/usr/local/bin/nfl-mcp"
-        assert args == ["serve"]
-
-    def test_resolve_server_command_falls_back_to_python_module(self, monkeypatch):
-        monkeypatch.setattr("nfl_mcp.cli.shutil.which", lambda name: None)
-        cmd, args = cli._resolve_server_command()
-        assert cmd == cli.sys.executable
-        assert args == ["-m", "nfl_mcp.cli", "serve"]
-
-    def test_build_server_config_uses_resolved_command(self, monkeypatch):
-        monkeypatch.setattr("nfl_mcp.cli._resolve_server_command", lambda: ("uvx", ["nfl-mcp", "serve"]))
+    def test_build_server_config_default_url(self):
         result = cli._build_server_config({})
-        assert result == {"command": "uvx", "args": ["nfl-mcp", "serve"]}
+        assert result == {"url": "http://localhost:8000/mcp"}
+
+    def test_build_server_config_custom_host_port(self):
+        result = cli._build_server_config({"serve_host": "0.0.0.0", "serve_port": 9000})
+        assert result == {"url": "http://localhost:9000/mcp"}
+
+    def test_build_server_config_explicit_host(self):
+        result = cli._build_server_config({"serve_host": "192.168.1.10", "serve_port": 9000})
+        assert result == {"url": "http://192.168.1.10:9000/mcp"}
 
     @pytest.mark.parametrize("platform_name,env_var,expected_parts", [
         ("darwin", None, ("Library", "Application Support", "Claude", "claude_desktop_config.json")),

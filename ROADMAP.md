@@ -1,14 +1,17 @@
 # NFL MCP Multi-Dataset Expansion Roadmap
 
 ## Problem Statement
-`nfl-mcp` currently ingests and serves only play-by-play (`load_pbp`) data plus a few derived aggregate tables. The goal is to expand ingestion, local DuckDB storage, MCP tooling, and UX to support the full nflreadpy dataset family (pbp, schedules, players, rosters, stats, injuries, contracts, combine, fantasy, etc.), then add a terminal-first TUI and CLI-agent workflows.
+`nfl-mcp` is a local/remote MCP server ingesting NFL data from nflreadpy into DuckDB and exposing it to AI clients (Claude Desktop, VS Code) via the Model Context Protocol. The goal is to expand ingestion, local DuckDB storage, MCP tooling, and UX to support the full nflreadpy dataset family, then add CLI-agent workflows and a TUI.
 
-## Current State Analysis
-- **Single-dataset ingestion path**: `nfl_mcp/ingest.py` only calls `nflreadpy.load_pbp(...)`, writes to `plays`, and builds pbp-centric aggregate tables (`team_offense_stats`, `team_defense_stats`, `situational_stats`, `formation_effectiveness`).
-- **Single DB connection target**: `nfl_mcp/database.py` opens one DuckDB path from config/env (`NFL_MCP_DB_PATH`).
-- **MCP surface is pbp-focused**: `nfl_mcp/server.py` registers tools for schema/status/query/search/team/player/compare tied to pbp and current aggregates.
-- **CLI is pbp-centric**: `nfl_mcp/cli.py` exposes `ingest` with season range semantics that align to pbp flow.
-- **Testing**: integration tests in `tests/test_tools.py` assume pbp-derived tables and season filters (notably 2024 in CI).
+## Current State (as of March 2026)
+- **Transport**: Streamable HTTP (replaced stdio). Server runs as a persistent process via `nfl-mcp serve`. `init` wizard offers to start the server.
+- **Multi-dataset ingestion**: Declarative registry in `registry.py` covering 33 tables across 3 waves. Generic ingest loop in `ingest.py` with idempotency, schema reconciliation, and `_ingest_metadata` tracking.
+- **MCP tools**: 12 structured tools — `nfl_search_plays`, `nfl_team_stats`, `nfl_player_stats`, `nfl_compare`, `nfl_schedule`, `nfl_roster`, `nfl_injuries`, `nfl_snap_counts`, `nfl_schema`, `nfl_status`, `nfl_catalog`, `nfl_query` (last resort).
+- **CLI**: `serve` (uvicorn, `--host`/`--port`), `ingest` (`--dataset`/`--start`/`--end`/`--fresh`), `init`, `setup-client`, `doctor`.
+- **Spread/betting data**: `spread_line` and `total_line` are already columns in the `plays` PBP table. Accessible today via `nfl_search_plays` or `nfl_query`.
+- **Fantasy data**: Wave 3 datasets (`ff_playerids`, `ff_rankings`, `ff_opportunity`, `ftn_charting`) are in the registry but opt-in (not ingested by default). No dedicated MCP tools yet.
+- **Testing**: 331 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
+- **Eval harness**: Private, lives at `~/nfl-mcp-evals/`. 29 cases, 29/29 passing on gpt-5.4 with prompt caching (~$0.035/run, 94% cache hit).
 
 ## Proposed Architecture (Target)
 1. **Dataset catalog + ingestion registry**
@@ -44,35 +47,20 @@
 - `load_ff_playerids`, `load_ff_rankings`, `load_ff_opportunity`
 
 ## Implementation Plan (phased)
-### Phase A — Data Platform Foundation
-- Build dataset registry and generic ingest runner (`ingest dataset` / `ingest all`).
-- Add table naming conventions and metadata table (ingest history, row counts, last refresh, source function).
-- Implement idempotent load semantics and schema drift handling per dataset.
+### ✅ Phase A — Data Platform Foundation
+Dataset registry (`registry.py`), generic ingest runner, metadata table (`_ingest_metadata`), idempotent loads, schema drift handling.
 
-### Phase B — Multi-table DuckDB Modeling
-- Create raw tables for each dataset with consistent column normalization.
-- Build conformed dimensions (teams, players, games, seasons/weeks).
-- Build serving marts used by MCP tools (player season summaries, team trends, injury timeline, roster snapshots, fantasy opportunity).
+### ✅ Phase B — Multi-table DuckDB Modeling
+Raw tables for all Wave 1/2 datasets. Serving aggregates used by MCP tools.
 
-### Phase C — MCP API Expansion
-- Add `nfl_catalog` tool (what datasets are loaded, freshness, row counts).
-- Extend `nfl_schema` and `nfl_status` to include dataset/table health.
-- Add domain tools:
-  - schedules/games
-  - player profile + transactions/injuries
-  - roster/snap/depth evolution
-  - advanced stats (nextgen/ftn)
-  - fantasy rankings/opportunity.
-- Keep `nfl_query` as last-resort read-only path.
+### ✅ Phase C — MCP API Expansion
+`nfl_catalog`, extended `nfl_schema`/`nfl_status`, 12 domain tools covering schedules, rosters, injuries, snap counts, player/team stats, compare. `nfl_query` as last resort.
 
-### Phase D — CLI & Operations
-- Add CLI commands/options:
-  - `nfl-mcp ingest --dataset <name|all>`
-  - `nfl-mcp ingest --season/--week` where supported
-  - `nfl-mcp refresh --dataset ...`
-  - `nfl-mcp status --dataset ...`
-- Add health checks per dataset in `doctor`.
-- Add CI job profile(s): no-db unit, pbp-integration, full multi-dataset smoke.
+### ✅ Phase D — CLI & Operations
+`ingest --dataset`/`--start`/`--end`/`--fresh`, `serve --host`/`--port`, `doctor`, `setup-client`, `init` (offers to start server). Streamable HTTP transport replacing stdio.
+
+### ✅ Phase G — Tool Routing Evals
+Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~$0.035/run). `seed=42 + temperature=0` for determinism, retry wrapper for transient errors.
 
 ### Phase E — TUI UX
 - Build a curses/textual-based TUI prototype:
@@ -89,27 +77,11 @@
   - non-interactive ingest/query flows.
 - Provide templates for local autonomous workflows (batch reports, scheduled refresh + insights).
 
-### Phase G — Tool Routing Evals
-Local-only eval harness (not run in CI, no API key required from contributors) for validating that Claude picks the right MCP tool for a given prompt.
-
-**Motivation:** As more tools are added, it becomes easy for Claude to fall back to `nfl_query` instead of structured tools, or to pass malformed arguments (e.g. `team="Kansas City"` instead of `team="KC"`). Evals catch regressions before they reach users.
-
-**Design:**
-- Lives in `evals/` directory, gitignored API key via `.env` / `ANTHROPIC_API_KEY` env var
-- Uses the Anthropic Python SDK — sends each prompt to Claude with the same `TOOLS` list from `server.py`
-- Inspects the `tool_use` block(s) in the response; does not execute the tools
-- Assertions cover:
-  - **Tool selection** — correct tool was called (not `nfl_query` as a fallback)
-  - **Argument shape** — required args are present and correctly formatted (team abbrevs, integer seasons, etc.)
-  - **Anti-patterns** — `nfl_query` is not called when a structured tool exists for the question
-- Eval cases defined as plain dicts (`prompt`, `expected_tool`, `expected_args`) — easy to add new ones
-- Run manually with `pytest evals/ -m eval` before cutting a release or after changing tool descriptions
-
-**What it won't cover (out of scope):**
-- Answer correctness / response quality (would require LLM-as-judge or golden answers)
-- Actual tool execution / data correctness (covered by integration tests against DuckDB)
-
-**Estimated scope:** ~1 file, ~150 lines, ~30 seed eval cases covering all 12 tools.
+### Phase H — Fantasy & Advanced Stats Tools *(next up)*
+- Dedicated MCP tools for Wave 3 datasets once ingested:
+  - `nfl_fantasy_rankings`, `nfl_fantasy_opportunity` (currently in registry, no tools)
+  - `nfl_ftn_charting` for advanced snap/route/coverage charting
+- Spread/betting data is already queryable via `plays` table (`spread_line`, `total_line`) — consider a `nfl_betting_lines` convenience tool surfacing game-level spread/total without raw SQL.
 
 ## Technical Notes / Design Choices
 - Preserve backward compatibility for existing pbp tools and CLI defaults.
@@ -124,21 +96,7 @@ Local-only eval harness (not run in CI, no API key required from contributors) f
 - **Cross-source key mismatch** → canonical ID mapping tables and reconciliation tests.
 - **Tool explosion** → group tools by domain with consistent naming and shared filter schema.
 
-## Decisions + Open Questions
-- **Chosen baseline**: single DuckDB with namespaced tables.
-- Open:
-  1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
-  2. Scope of first public TUI release (read-only dashboards vs full query builder + chart composer).
-
-## Todo Backlog (execution order)
-1. Architecture and dataset registry contract
-2. Generic ingestion framework
-3. Raw staging tables for all `load_*` datasets
-4. Conformed dimensions and serving marts
-5. MCP tool registry + domain tool rollout
-6. CLI dataset-oriented commands and doctor/status updates
-7. Observability and metadata/freshness reporting
-8. Test matrix expansion (unit, db-integration, multi-dataset smoke)
-9. Documentation and migration guide
-10. TUI MVP
-11. CLI agent compatibility layer
+## Open Questions
+1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
+2. Scope of first public TUI release (read-only dashboards vs full query builder + chart composer).
+3. Whether `nfl_betting_lines` warrants a dedicated tool or if `nfl_schedule` (which already returns spread/total) is sufficient.

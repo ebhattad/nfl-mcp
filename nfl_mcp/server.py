@@ -4,14 +4,16 @@ Tools: nfl_schema, nfl_status, nfl_query, nfl_search_plays, nfl_team_stats, nfl_
        nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts
 """
 
-import asyncio
+import contextlib
 import logging
-import os
+from collections.abc import AsyncIterator
 from typing import Any
 
-import mcp.server.stdio
 from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent, Tool
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 from .tools import (
     nfl_schema, nfl_status, nfl_query, nfl_search_plays,
@@ -22,7 +24,7 @@ from .tools import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nfl-mcp")
 
-server = Server("nfl-playbyplay")
+_mcp_server = Server("nfl-mcp")
 
 
 def _tool_error_payload(tool_name: str, exc: Exception) -> dict[str, Any]:
@@ -254,8 +256,9 @@ TOOLS = [
         name="nfl_compare",
         description=(
             "PREFERRED for any comparison question. Side-by-side stats for two teams "
-            "or two players. Always use this instead of nfl_query when the user asks "
-            "to compare, rank, or contrast two teams or players."
+            "or two players in a single call. Always use this instead of calling "
+            "nfl_team_stats or nfl_player_stats twice when the user asks to compare, "
+            "rank, or contrast two teams or two players against each other."
         ),
         inputSchema={
             "type": "object",
@@ -429,12 +432,12 @@ TOOLS = [
 ]
 
 
-@server.list_tools()
+@_mcp_server.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOLS
 
 
-@server.call_tool()
+@_mcp_server.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     import json
 
@@ -465,8 +468,24 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(_tool_error_payload(name, e), indent=2))]
 
 
-async def run():
-    logger.info("Starting NFL MCP Server")
-    logger.info(f"DB: {os.getenv('DB_NAME', 'nflread')} @ {os.getenv('DB_HOST', 'localhost')}")
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+def create_app() -> Starlette:
+    """Return a Starlette ASGI app that serves the MCP server over Streamable HTTP."""
+    session_manager = StreamableHTTPSessionManager(
+        app=_mcp_server,
+        json_response=False,
+        stateless=False,
+    )
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        logger.info("Starting NFL MCP server (Streamable HTTP)")
+        async with session_manager.run():
+            yield
+        logger.info("NFL MCP server stopped")
+
+    from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+
+    return Starlette(
+        lifespan=lifespan,
+        routes=[Route("/mcp", endpoint=StreamableHTTPASGIApp(session_manager))],
+    )

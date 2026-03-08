@@ -2,20 +2,21 @@
 NFL MCP — command-line entry point
 
   nfl-mcp init                Interactive setup wizard
-  nfl-mcp serve               Start the MCP server (stdio, for Claude Desktop / IDE)
+  nfl-mcp serve               Start the MCP server (Streamable HTTP)
   nfl-mcp ingest              Load NFL play-by-play data into the database
   nfl-mcp setup-client        Configure Claude Desktop / VS Code MCP
   nfl-mcp doctor              Check that everything is working
 """
 
-import asyncio
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
 import click
+import uvicorn
+
+from .server import create_app
 
 
 @click.group()
@@ -26,10 +27,17 @@ def main():
 # ── serve ──────────────────────────────────────────────────────────────────────
 
 @main.command()
-def serve():
-    """Start the MCP server over stdio (use this in Claude Desktop / IDE config)."""
-    from .server import run
-    asyncio.run(run())
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Host to bind the HTTP server to. Use 0.0.0.0 for LAN access.")
+@click.option("--port", default=8000, show_default=True, type=int,
+              help="Port to listen on.")
+def serve(host, port):
+    """Start the MCP server over Streamable HTTP."""
+    display_host = "localhost" if host == "0.0.0.0" else host
+    click.echo(f"🏈 NFL MCP server listening on http://{display_host}:{port}/mcp")
+    if host == "0.0.0.0":
+        click.echo(f"   (bound to all interfaces — clients should connect via http://localhost:{port}/mcp)")
+    uvicorn.run(create_app(), host=host, port=port)
 
 
 # ── ingest ─────────────────────────────────────────────────────────────────────
@@ -162,10 +170,20 @@ def init(start, end, skip_ingest):
     if click.confirm("  Configure an MCP client (Claude Desktop / VS Code)?", default=True):
         _setup_client_interactive(config)
 
+    # ── 5. Offer to start the server ───────────────────────────────────────
     click.echo()
     click.secho("🎉 Setup complete!", bold=True, fg="green")
-    click.echo("   Start asking questions about NFL data in your IDE.")
     click.echo()
+    click.echo("   The MCP server needs to be running for your IDE to connect.")
+    click.echo("   You can start it any time with:  nfl-mcp serve")
+    click.echo()
+    if click.confirm("  Start the server now?", default=True):
+        click.secho("   Starting server on http://localhost:8000/mcp  (Ctrl-C to stop)", fg="cyan")
+        click.echo()
+        uvicorn.run(create_app(), host="127.0.0.1", port=8000)
+    else:
+        click.echo("   Run  nfl-mcp serve  when you're ready.")
+        click.echo()
 
 
 # ── setup-client ───────────────────────────────────────────────────────────────
@@ -202,20 +220,13 @@ def _setup_client_interactive(config: dict):
                 _configure_vscode(config)
 
 
-def _resolve_server_command() -> tuple[str, list[str]]:
-    """Figure out the best command to start the MCP server."""
-    if shutil.which("uvx"):
-        return "uvx", ["nfl-mcp", "serve"]
-    nfl_mcp_bin = shutil.which("nfl-mcp")
-    if nfl_mcp_bin:
-        return nfl_mcp_bin, ["serve"]
-    return sys.executable, ["-m", "nfl_mcp.cli", "serve"]
-
-
 def _build_server_config(config: dict) -> dict:
     """Build the MCP server JSON block for a client config file."""
-    cmd, args = _resolve_server_command()
-    return {"command": cmd, "args": args}
+    host = config.get("serve_host", "localhost")
+    port = config.get("serve_port", 8000)
+    # 0.0.0.0 is a bind address, not a connectable URL — use localhost for clients
+    display_host = "localhost" if host == "0.0.0.0" else host
+    return {"url": f"http://{display_host}:{port}/mcp"}
 
 
 def _claude_desktop_config_path() -> Path | None:
