@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "python-dotenv", "openai"]
 
 [project.urls]
 Homepage = "https://github.com/ebhattad/nfl-mcp"
@@ -53,8 +53,9 @@ packages = ["nfl_mcp"]
 markers = [
     "unit: unit tests that do not require a loaded local DuckDB dataset",
     "integration: tests that require a loaded local DuckDB dataset",
+    "eval: tool routing evals that require an LLM API key (not run in CI)",
 ]
-addopts = "--cov=nfl_mcp --cov-report=term-missing --cov-report=xml"
+addopts = "--cov=nfl_mcp --cov-report=term-missing --cov-report=xml --ignore=evals"
 
 [tool.coverage.run]
 omit = ["nfl_mcp/schema_pbp.py"]  # pure data, no logic to cover

@@ -256,8 +256,9 @@ TOOLS = [
         name="nfl_compare",
         description=(
             "PREFERRED for any comparison question. Side-by-side stats for two teams "
-            "or two players. Always use this instead of nfl_query when the user asks "
-            "to compare, rank, or contrast two teams or players."
+            "or two players in a single call. Always use this instead of calling "
+            "nfl_team_stats or nfl_player_stats twice when the user asks to compare, "
+            "rank, or contrast two teams or two players against each other."
         ),
         inputSchema={
             "type": "object",
