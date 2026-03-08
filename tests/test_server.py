@@ -81,7 +81,6 @@ def test_create_app_lifespan_runs(monkeypatch):
 
     # Patch StreamableHTTPSessionManager so .run() uses our fake
     import nfl_mcp.server as srv
-    original_manager_class = srv.StreamableHTTPSessionManager
 
     class FakeManager:
         def __init__(self, *args, **kwargs):
