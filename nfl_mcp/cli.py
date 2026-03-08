@@ -2,13 +2,12 @@
 NFL MCP — command-line entry point
 
   nfl-mcp init                Interactive setup wizard
-  nfl-mcp serve               Start the MCP server (stdio, for Claude Desktop / IDE)
+  nfl-mcp serve               Start the MCP server (Streamable HTTP)
   nfl-mcp ingest              Load NFL play-by-play data into the database
   nfl-mcp setup-client        Configure Claude Desktop / VS Code MCP
   nfl-mcp doctor              Check that everything is working
 """
 
-import asyncio
 import json
 import os
 import shutil
@@ -16,6 +15,9 @@ import sys
 from pathlib import Path
 
 import click
+import uvicorn
+
+from .server import create_app
 
 
 @click.group()
@@ -26,10 +28,14 @@ def main():
 # ── serve ──────────────────────────────────────────────────────────────────────
 
 @main.command()
-def serve():
-    """Start the MCP server over stdio (use this in Claude Desktop / IDE config)."""
-    from .server import run
-    asyncio.run(run())
+@click.option("--host", default="0.0.0.0", show_default=True,
+              help="Host to bind the HTTP server to.")
+@click.option("--port", default=8000, show_default=True, type=int,
+              help="Port to listen on.")
+def serve(host, port):
+    """Start the MCP server over Streamable HTTP."""
+    click.echo(f"🏈 NFL MCP server listening on http://{host}:{port}/mcp")
+    uvicorn.run(create_app(), host=host, port=port)
 
 
 # ── ingest ─────────────────────────────────────────────────────────────────────

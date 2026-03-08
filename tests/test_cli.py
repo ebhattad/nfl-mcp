@@ -18,26 +18,19 @@ def runner():
 # ── serve ───────────────────────────────────────────────────────────────────────
 
 class TestServe:
-    def test_serve_invokes_async_server_run(self, runner, monkeypatch):
+    def test_serve_starts_uvicorn(self, runner, monkeypatch):
         called = {}
 
-        async def fake_server_run():
-            called["server_run"] = True
+        def fake_uvicorn_run(app, host, port):
+            called["host"] = host
+            called["port"] = port
 
-        def fake_asyncio_run(coro):
-            import asyncio as _asyncio
-            loop = _asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(coro)
-            finally:
-                loop.close()
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", fake_uvicorn_run)
 
-        monkeypatch.setattr("nfl_mcp.server.run", fake_server_run)
-        monkeypatch.setattr("nfl_mcp.cli.asyncio.run", fake_asyncio_run)
-
-        result = runner.invoke(main, ["serve"])
+        result = runner.invoke(main, ["serve", "--host", "127.0.0.1", "--port", "9000"])
         assert result.exit_code == 0
-        assert called.get("server_run") is True
+        assert called.get("host") == "127.0.0.1"
+        assert called.get("port") == 9000
 
 
 # ── ingest --list ──────────────────────────────────────────────────────────────

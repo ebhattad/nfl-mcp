@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import nfl_mcp.server as server_module
-from nfl_mcp.server import _tool_error_payload
+from nfl_mcp.server import _tool_error_payload, create_app
 
 
 def test_error_payload_for_unknown_tool():
@@ -56,22 +56,9 @@ def test_call_tool_tool_exception_returns_execution_error(monkeypatch):
     assert payload["error"]["tool"] == "nfl_status"
 
 
-def test_run_invokes_server_with_stdio_streams(monkeypatch):
-    captured = {}
-
-    class _DummyContext:
-        async def __aenter__(self):
-            return "read_stream", "write_stream"
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    async def _fake_run(read_stream, write_stream, init_options):
-        captured["call"] = (read_stream, write_stream, init_options)
-
-    monkeypatch.setattr(server_module.mcp.server.stdio, "stdio_server", lambda: _DummyContext())
-    monkeypatch.setattr(server_module.server, "create_initialization_options", lambda: {"capabilities": {}})
-    monkeypatch.setattr(server_module.server, "run", _fake_run)
-
-    asyncio.run(server_module.run())
-    assert captured["call"] == ("read_stream", "write_stream", {"capabilities": {}})
+def test_create_app_returns_starlette_app():
+    from starlette.applications import Starlette
+    app = create_app()
+    assert isinstance(app, Starlette)
+    route_paths = [r.path for r in app.routes]
+    assert "/mcp" in route_paths

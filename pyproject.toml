@@ -24,6 +24,9 @@ dependencies = [
     "polars>=0.20",
     "click>=8.0",
     "tqdm>=4.0",
+    "starlette>=0.27",
+    "uvicorn>=0.20",
+    "sse-starlette>=1.6",
 ]
 
 [project.optional-dependencies]
