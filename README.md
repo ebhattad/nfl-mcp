@@ -137,48 +137,36 @@ Ingest is **idempotent** — re-running skips datasets and seasons already in th
 
 All data is sourced from [nflverse](https://github.com/nflverse/nflverse-data) via nflreadpy and stored locally in DuckDB.
 
-### Default datasets (loaded by `nfl-mcp init`)
+| Table | Default | Coverage |
+|---|:-:|---|
+| `plays` | ✓ | 1999–present |
+| `schedules` | ✓ | 1999–present |
+| `rosters` | ✓ | 1920–present |
+| `player_stats` | ✓ | 1999–present |
+| `team_stats_raw` | ✓ | 1999–present |
+| `injuries` | ✓ | 2009–present |
+| `snap_counts` | ✓ | 2012–present |
+| `teams` | ✓ | current |
+| `players` | ✓ | all-time |
+| `contracts` | ✓ | historical |
+| `trades` | ✓ | historical |
+| `depth_charts` | | 2001–present |
+| `rosters_weekly` | | 2002–present |
+| `ff_opportunity` | | 2006–present |
+| `officials` | | 2015–present |
+| `nextgen_stats_*` | | 2016–present |
+| `participation` | | 2016–2024 |
+| `pfr_advstats_*` | | 2018–present |
+| `ftn_charting` | | 2022–present |
+| `draft_picks` | | 1980–present |
+| `combine` | | all-time |
+| `ff_playerids` | | current |
+| `ff_rankings_draft` | | current |
+| `ff_rankings_week` | | current |
 
-| Dataset | `--dataset` flag | DuckDB table | Coverage | Description |
-|---------|-----------------|--------------|----------|-------------|
-| Play-by-play | `pbp` | `plays` | 1999–present | Every play, 370+ columns including EPA, WPA, air yards, and more |
-| Schedules | `schedules` | `schedules` | All seasons | Game-level results, scores, and metadata |
-| Rosters | `rosters` | `rosters` | 1920–present | Season-level roster with positions, teams, and player IDs |
-| Player stats | `player_stats` | `player_stats` | 1999–present | Weekly passing, rushing, and receiving stats |
-| Team stats | `team_stats_raw` | `team_stats_raw` | 1999–present | Weekly team-level offensive and defensive stats |
-| Injuries | `injuries` | `injuries` | 2009–present | Weekly injury report designations |
-| Snap counts | `snap_counts` | `snap_counts` | 2012–present | Offensive and defensive snap counts per player per game |
-| Players | `players` | `players` | All-time | Player directory with IDs across nflverse, PFR, ESPN, and more |
-| Teams | `teams` | `teams` | Current | Team abbreviations, colors, logos, and conference/division |
-| Contracts | `contracts` | `contracts` | Historical | Player contract history and values |
-| Trades | `trades` | `trades` | Historical | NFL trade transaction log |
-
-### Extended datasets (opt-in via `--dataset`)
-
-| Dataset | `--dataset` flag | DuckDB table | Coverage | Description |
-|---------|-----------------|--------------|----------|-------------|
-| Weekly rosters | `rosters_weekly` | `rosters_weekly` | 2002–present | Roster snapshot per team per week — large |
-| Depth charts | `depth_charts` | `depth_charts` | 2001–present | Weekly depth chart positions |
-| Officials | `officials` | `officials` | 2015–present | Referee crew assignments per game |
-| Participation | `participation` | `participation` | 2016–2024 | Player-level participation flags per play — very large |
-| Next Gen Stats (pass) | `nextgen_stats_passing` | `nextgen_stats_passing` | 2016–present | NGS passing metrics (time to throw, aggressiveness, etc.) |
-| Next Gen Stats (recv) | `nextgen_stats_receiving` | `nextgen_stats_receiving` | 2016–present | NGS receiving metrics (separation, yards after catch, etc.) |
-| Next Gen Stats (rush) | `nextgen_stats_rushing` | `nextgen_stats_rushing` | 2016–present | NGS rushing metrics (efficiency, yards over expected, etc.) |
-| PFR adv stats (pass) | `pfr_advstats_pass` | `pfr_advstats_pass` | 2018–present | PFR advanced passing (pressure rate, on-target %, etc.) |
-| PFR adv stats (rush) | `pfr_advstats_rush` | `pfr_advstats_rush` | 2018–present | PFR advanced rushing (broken tackles, yards after contact) |
-| PFR adv stats (recv) | `pfr_advstats_rec` | `pfr_advstats_rec` | 2018–present | PFR advanced receiving (drop rate, yards after catch) |
-| PFR adv stats (def) | `pfr_advstats_def` | `pfr_advstats_def` | 2018–present | PFR advanced defensive stats |
-| Draft picks | `draft_picks` | `draft_picks` | 1980–present | Draft pick history with round, pick, and player info |
-| Combine | `combine` | `combine` | All-time | NFL Combine measurables (40 time, bench, vertical, etc.) |
-| FTN charting | `ftn_charting` | `ftn_charting` | 2022–present | FTN play-level charting data |
-| FF opportunity | `ff_opportunity` | `ff_opportunity` | 2006–present | Fantasy football opportunity model (target share, carries, etc.) |
-| FF player IDs | `ff_playerids` | `ff_playerids` | Current | Fantasy platform ID crosswalk (ESPN, Yahoo, Sleeper, etc.) |
-| FF rankings (draft) | `ff_rankings_draft` | `ff_rankings_draft` | Current | Fantasy draft rankings and projections |
-| FF rankings (week) | `ff_rankings_week` | `ff_rankings_week` | Current | Weekly fantasy rankings and projections |
-
-To load everything:
 ```bash
-nfl-mcp ingest --dataset all
+nfl-mcp ingest --dataset all   # load everything
+nfl-mcp ingest --list          # see all dataset names
 ```
 
 ## MCP Tools
@@ -192,6 +180,12 @@ nfl-mcp ingest --dataset all
 | `nfl_team_stats` | Pre-aggregated team offense, defense, and situational stats |
 | `nfl_player_stats` | Player stats by season and season type — passing, rushing, or receiving |
 | `nfl_compare` | Side-by-side comparison of two teams or two players |
+| `nfl_schedule` | Game schedule and results — scores, spread, weather, coaches |
+| `nfl_roster` | Team roster by season and position |
+| `nfl_injuries` | Player injury report status by team, week, and designation |
+| `nfl_snap_counts` | Offensive, defensive, and special teams snap counts per player |
+| `nfl_fantasy_opportunity` | Target share, air yards share, carry share per player per week (2006–present, requires `ff_opportunity` dataset) |
+| `nfl_catalog` | List all loaded tables with row counts and last refresh time |
 
 ## Key columns in `plays`
 

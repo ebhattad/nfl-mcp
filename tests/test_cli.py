@@ -318,6 +318,14 @@ class TestInitAndSetupClient:
         assert result.exit_code == 0
         assert called and called[0][0] == "claude"
 
+    def test_setup_client_routes_claude_code(self, runner, monkeypatch):
+        called = []
+        monkeypatch.setattr("nfl_mcp.config.load_config", lambda: {"duckdb_path": "/tmp/db.duckdb"})
+        monkeypatch.setattr("nfl_mcp.cli._configure_claude_code", lambda cfg: called.append(("claude-code", cfg)))
+        result = runner.invoke(main, ["setup-client", "--client", "claude-code"])
+        assert result.exit_code == 0
+        assert called and called[0][0] == "claude-code"
+
     def test_setup_client_routes_vscode(self, runner, monkeypatch):
         called = []
         monkeypatch.setattr("nfl_mcp.config.load_config", lambda: {"duckdb_path": "/tmp/db.duckdb"})
@@ -332,20 +340,37 @@ class TestInitAndSetupClient:
 class TestCliHelpers:
     def test_setup_client_interactive_configures_selected_clients(self, monkeypatch, tmp_path):
         configured = []
-        answers = iter([True, False])  # Claude yes, VS Code no
+        # 3 prompts: Claude Desktop=yes, Claude Code=no, VS Code=no
+        answers = iter([True, False, False])
 
         monkeypatch.setattr("nfl_mcp.cli._claude_desktop_config_path", lambda: tmp_path / "claude_desktop_config.json")
         monkeypatch.setattr("nfl_mcp.cli.click.confirm", lambda *args, **kwargs: next(answers))
         monkeypatch.setattr("nfl_mcp.cli._configure_claude_desktop", lambda cfg: configured.append("claude"))
+        monkeypatch.setattr("nfl_mcp.cli._configure_claude_code", lambda cfg: configured.append("claude-code"))
         monkeypatch.setattr("nfl_mcp.cli._configure_vscode", lambda cfg: configured.append("vscode"))
 
         cli._setup_client_interactive({"duckdb_path": "/tmp/db.duckdb"})
         assert configured == ["claude"]
 
+    def test_setup_client_interactive_configures_claude_code_branch(self, monkeypatch, tmp_path):
+        configured = []
+        # No Claude Desktop; 2 prompts: Claude Code=yes, VS Code=no
+        answers = iter([True, False])
+        monkeypatch.setattr("nfl_mcp.cli._claude_desktop_config_path", lambda: None)
+        monkeypatch.setattr("nfl_mcp.cli.click.confirm", lambda *args, **kwargs: next(answers))
+        monkeypatch.setattr("nfl_mcp.cli._configure_claude_code", lambda cfg: configured.append("claude-code"))
+        monkeypatch.setattr("nfl_mcp.cli._configure_vscode", lambda cfg: configured.append("vscode"))
+
+        cli._setup_client_interactive({"duckdb_path": "/tmp/db.duckdb"})
+        assert configured == ["claude-code"]
+
     def test_setup_client_interactive_configures_vscode_branch(self, monkeypatch):
         configured = []
+        # No Claude Desktop; 2 prompts: Claude Code=no, VS Code=yes
+        answers = iter([False, True])
         monkeypatch.setattr("nfl_mcp.cli._claude_desktop_config_path", lambda: None)
-        monkeypatch.setattr("nfl_mcp.cli.click.confirm", lambda *args, **kwargs: True)
+        monkeypatch.setattr("nfl_mcp.cli.click.confirm", lambda *args, **kwargs: next(answers))
+        monkeypatch.setattr("nfl_mcp.cli._configure_claude_code", lambda cfg: configured.append("claude-code"))
         monkeypatch.setattr("nfl_mcp.cli._configure_vscode", lambda cfg: configured.append("vscode"))
         monkeypatch.setattr("nfl_mcp.cli._configure_claude_desktop", lambda cfg: configured.append("claude"))
 
@@ -416,6 +441,29 @@ class TestCliHelpers:
         cli._configure_vscode({})
         saved = json.loads(mcp_path.read_text())
         assert saved["servers"]["nfl"]["command"] == "nfl-mcp"
+
+    def test_configure_claude_code_writes_global_mcp_json(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("nfl_mcp.cli.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("nfl_mcp.cli._build_server_config", lambda cfg: {"url": "http://localhost:8000/mcp"})
+
+        cli._configure_claude_code({})
+
+        path = tmp_path / ".claude" / "mcp.json"
+        assert path.exists()
+        saved = json.loads(path.read_text())
+        assert saved["mcpServers"]["nfl"]["url"] == "http://localhost:8000/mcp"
+
+    def test_configure_claude_code_merges_with_invalid_existing_json(self, monkeypatch, tmp_path):
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "mcp.json").write_text("{invalid json")
+
+        monkeypatch.setattr("nfl_mcp.cli.Path.home", lambda: tmp_path)
+        monkeypatch.setattr("nfl_mcp.cli._build_server_config", lambda cfg: {"url": "http://localhost:8000/mcp"})
+
+        cli._configure_claude_code({})
+        saved = json.loads((claude_dir / "mcp.json").read_text())
+        assert saved["mcpServers"]["nfl"]["url"] == "http://localhost:8000/mcp"
 
 
 # ── doctor command ──────────────────────────────────────────────────────────────

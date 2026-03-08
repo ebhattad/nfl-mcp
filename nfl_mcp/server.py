@@ -19,6 +19,7 @@ from .tools import (
     nfl_schema, nfl_status, nfl_query, nfl_search_plays,
     nfl_team_stats, nfl_player_stats, nfl_compare,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
+    nfl_fantasy_opportunity,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -429,6 +430,40 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="nfl_fantasy_opportunity",
+        description=(
+            "PREFERRED for fantasy football opportunity questions. Look up target share, "
+            "air yards share, carry share, and opportunity scores per player per week. "
+            "Requires ff_opportunity dataset. Available 2006–present. Filter by player, "
+            "team, season, week, or position."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {
+                    "type": "string",
+                    "description": "Player name (partial match, e.g. 'Jefferson')",
+                },
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation (e.g. KC, PHI)",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Season year. Omit for all seasons.",
+                },
+                "week": {
+                    "type": "integer",
+                    "description": "Week number (1–22). Omit for full season.",
+                },
+                "position": {
+                    "type": "string",
+                    "description": "Position filter (e.g. WR, RB, TE).",
+                },
+            },
+        },
+    ),
 ]
 
 
@@ -453,7 +488,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         "nfl_roster":       nfl_roster,
         "nfl_injuries":     nfl_injuries,
         "nfl_schedule":     nfl_schedule,
-        "nfl_snap_counts":  nfl_snap_counts,
+        "nfl_snap_counts":          nfl_snap_counts,
+        "nfl_fantasy_opportunity":  nfl_fantasy_opportunity,
     }
 
     try:

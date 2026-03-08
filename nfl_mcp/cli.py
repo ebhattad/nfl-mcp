@@ -189,17 +189,19 @@ def init(start, end, skip_ingest):
 # ── setup-client ───────────────────────────────────────────────────────────────
 
 @main.command("setup-client")
-@click.option("--client", type=click.Choice(["claude-desktop", "vscode", "auto"]),
+@click.option("--client", type=click.Choice(["claude-desktop", "claude-code", "vscode", "auto"]),
               default="auto", show_default=True,
               help="Which client to configure.")
 def setup_client(client):
-    """Auto-configure Claude Desktop or VS Code to use the NFL MCP server."""
+    """Auto-configure Claude Desktop, Claude Code, or VS Code to use the NFL MCP server."""
     from .config import load_config
     config = load_config()
     if client == "auto":
         _setup_client_interactive(config)
     elif client == "claude-desktop":
         _configure_claude_desktop(config)
+    elif client == "claude-code":
+        _configure_claude_code(config)
     elif client == "vscode":
         _configure_vscode(config)
 
@@ -209,13 +211,16 @@ def _setup_client_interactive(config: dict):
     clients = []
     claude_path = _claude_desktop_config_path()
     if claude_path:
-        clients.append(("Claude Desktop", claude_path))
-    clients.append(("VS Code / Claude Code", None))
+        clients.append(("Claude Desktop", "claude-desktop"))
+    clients.append(("Claude Code (global ~/.claude/mcp.json)", "claude-code"))
+    clients.append(("VS Code (.vscode/mcp.json in current directory)", "vscode"))
 
-    for name, _ in clients:
+    for name, key in clients:
         if click.confirm(f"    Configure {name}?", default=True):
-            if name == "Claude Desktop":
+            if key == "claude-desktop":
                 _configure_claude_desktop(config)
+            elif key == "claude-code":
+                _configure_claude_code(config)
             else:
                 _configure_vscode(config)
 
@@ -280,6 +285,26 @@ def _configure_vscode(config: dict):
 
     path.write_text(json.dumps(existing, indent=2))
     click.secho(f"    ✓ VS Code configured → {path}", fg="green")
+
+
+def _configure_claude_code(config: dict):
+    """Write or merge NFL MCP server into ~/.claude/mcp.json (Claude Code global config)."""
+    path = Path.home() / ".claude" / "mcp.json"
+    path.parent.mkdir(exist_ok=True)
+
+    existing = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            existing = {}
+
+    existing.setdefault("mcpServers", {})
+    existing["mcpServers"]["nfl"] = _build_server_config(config)
+
+    path.write_text(json.dumps(existing, indent=2))
+    click.secho(f"    ✓ Claude Code configured → {path}", fg="green")
+    click.echo("      Restart Claude Code to pick up changes.")
 
 
 # ── doctor ─────────────────────────────────────────────────────────────────────
