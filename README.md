@@ -103,29 +103,32 @@ Ingest is **idempotent** — re-running skips datasets and seasons already in th
 
 All data is sourced from [nflverse](https://github.com/nflverse/nflverse-data) via nflreadpy and stored locally in DuckDB.
 
-### Data availability
-
-`█` = data exists for that season. Default datasets load automatically with `nfl-mcp init`; extended datasets require `--dataset <name>`.
-
-| Table | Default | '99 | '00 | '01 | '02 | '03 | '04 | '05 | '06 | '07 | '08 | '09 | '10 | '11 | '12 | '13 | '14 | '15 | '16 | '17 | '18 | '19 | '20 | '21 | '22 | '23 | '24 |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `plays` | ✓ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `schedules` | ✓ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `rosters` | ✓ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `player_stats` | ✓ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `team_stats_raw` | ✓ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `injuries` | ✓ |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `snap_counts` | ✓ |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `depth_charts` |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `rosters_weekly` |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `ff_opportunity` |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `officials` |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `nextgen_stats_*` |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ | █ |
-| `participation` |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ | █ |  |
-| `pfr_advstats_*` |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ | █ | █ | █ | █ |
-| `ftn_charting` |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | █ | █ | █ |
-
-Static tables (no season dimension): `teams`, `players`, `contracts`, `trades`, `draft_picks`, `combine`, `ff_playerids`, `ff_rankings_draft`, `ff_rankings_week`
+| Table | Default | Coverage |
+|---|:-:|---|
+| `plays` | ✓ | 1999–present |
+| `schedules` | ✓ | 1999–present |
+| `rosters` | ✓ | 1920–present |
+| `player_stats` | ✓ | 1999–present |
+| `team_stats_raw` | ✓ | 1999–present |
+| `injuries` | ✓ | 2009–present |
+| `snap_counts` | ✓ | 2012–present |
+| `teams` | ✓ | current |
+| `players` | ✓ | all-time |
+| `contracts` | ✓ | historical |
+| `trades` | ✓ | historical |
+| `depth_charts` | | 2001–present |
+| `rosters_weekly` | | 2002–present |
+| `ff_opportunity` | | 2006–present |
+| `officials` | | 2015–present |
+| `nextgen_stats_*` | | 2016–present |
+| `participation` | | 2016–2024 |
+| `pfr_advstats_*` | | 2018–present |
+| `ftn_charting` | | 2022–present |
+| `draft_picks` | | 1980–present |
+| `combine` | | all-time |
+| `ff_playerids` | | current |
+| `ff_rankings_draft` | | current |
+| `ff_rankings_week` | | current |
 
 ```bash
 nfl-mcp ingest --dataset all   # load everything
