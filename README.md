@@ -50,9 +50,9 @@ Options:
 `init` offers to start the server for you. If you need to start it manually later:
 
 ```bash
-nfl-mcp serve                         # listens on http://0.0.0.0:8000/mcp
-nfl-mcp serve --port 9000             # custom port
-nfl-mcp serve --host 127.0.0.1        # localhost only
+nfl-mcp serve
+nfl-mcp serve --port 9000
+nfl-mcp serve --host 0.0.0.0
 ```
 
 The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`.
@@ -114,8 +114,9 @@ nfl-mcp doctor             Health check
 ### Serve options
 
 ```bash
-nfl-mcp serve --host 0.0.0.0 --port 8000   # defaults
+nfl-mcp serve
 nfl-mcp serve --port 9000
+nfl-mcp serve --host 0.0.0.0
 ```
 
 ### Ingestion options

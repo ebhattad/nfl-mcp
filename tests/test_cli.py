@@ -32,6 +32,19 @@ class TestServe:
         assert called.get("host") == "127.0.0.1"
         assert called.get("port") == 9000
 
+    def test_serve_default_host_is_localhost(self, runner, monkeypatch):
+        called = {}
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: called.update(host=host))
+        runner.invoke(main, ["serve"])
+        assert called.get("host") == "127.0.0.1"
+
+    def test_serve_prints_localhost_url_when_binding_all_interfaces(self, runner, monkeypatch):
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: None)
+        result = runner.invoke(main, ["serve", "--host", "0.0.0.0", "--port", "8000"])
+        assert result.exit_code == 0
+        assert "localhost:8000" in result.output
+        assert "all interfaces" in result.output
+
 
 # ── ingest --list ──────────────────────────────────────────────────────────────
 
@@ -287,7 +300,7 @@ class TestInitAndSetupClient:
         )
 
         assert result.exit_code == 0
-        assert uvicorn_calls == [("0.0.0.0", 8000)]
+        assert uvicorn_calls == [("127.0.0.1", 8000)]
 
     def test_setup_client_routes_auto(self, runner, monkeypatch):
         called = []
@@ -345,7 +358,11 @@ class TestCliHelpers:
 
     def test_build_server_config_custom_host_port(self):
         result = cli._build_server_config({"serve_host": "0.0.0.0", "serve_port": 9000})
-        assert result == {"url": "http://0.0.0.0:9000/mcp"}
+        assert result == {"url": "http://localhost:9000/mcp"}
+
+    def test_build_server_config_explicit_host(self):
+        result = cli._build_server_config({"serve_host": "192.168.1.10", "serve_port": 9000})
+        assert result == {"url": "http://192.168.1.10:9000/mcp"}
 
     @pytest.mark.parametrize("platform_name,env_var,expected_parts", [
         ("darwin", None, ("Library", "Application Support", "Claude", "claude_desktop_config.json")),

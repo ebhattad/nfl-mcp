@@ -96,21 +96,7 @@ Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~
 - **Cross-source key mismatch** → canonical ID mapping tables and reconciliation tests.
 - **Tool explosion** → group tools by domain with consistent naming and shared filter schema.
 
-## Decisions + Open Questions
-- **Chosen baseline**: single DuckDB with namespaced tables.
-- Open:
-  1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
-  2. Scope of first public TUI release (read-only dashboards vs full query builder + chart composer).
-
-## Todo Backlog (execution order)
-1. Architecture and dataset registry contract
-2. Generic ingestion framework
-3. Raw staging tables for all `load_*` datasets
-4. Conformed dimensions and serving marts
-5. MCP tool registry + domain tool rollout
-6. CLI dataset-oriented commands and doctor/status updates
-7. Observability and metadata/freshness reporting
-8. Test matrix expansion (unit, db-integration, multi-dataset smoke)
-9. Documentation and migration guide
-10. TUI MVP
-11. CLI agent compatibility layer
+## Open Questions
+1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
+2. Scope of first public TUI release (read-only dashboards vs full query builder + chart composer).
+3. Whether `nfl_betting_lines` warrants a dedicated tool or if `nfl_schedule` (which already returns spread/total) is sufficient.

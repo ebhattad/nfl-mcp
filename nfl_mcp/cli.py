@@ -27,13 +27,16 @@ def main():
 # ── serve ──────────────────────────────────────────────────────────────────────
 
 @main.command()
-@click.option("--host", default="0.0.0.0", show_default=True,
-              help="Host to bind the HTTP server to.")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Host to bind the HTTP server to. Use 0.0.0.0 for LAN access.")
 @click.option("--port", default=8000, show_default=True, type=int,
               help="Port to listen on.")
 def serve(host, port):
     """Start the MCP server over Streamable HTTP."""
-    click.echo(f"🏈 NFL MCP server listening on http://{host}:{port}/mcp")
+    display_host = "localhost" if host == "0.0.0.0" else host
+    click.echo(f"🏈 NFL MCP server listening on http://{display_host}:{port}/mcp")
+    if host == "0.0.0.0":
+        click.echo(f"   (bound to all interfaces — clients should connect via http://localhost:{port}/mcp)")
     uvicorn.run(create_app(), host=host, port=port)
 
 
@@ -175,9 +178,9 @@ def init(start, end, skip_ingest):
     click.echo("   You can start it any time with:  nfl-mcp serve")
     click.echo()
     if click.confirm("  Start the server now?", default=True):
-        click.secho("   Starting server on http://0.0.0.0:8000/mcp  (Ctrl-C to stop)", fg="cyan")
+        click.secho("   Starting server on http://localhost:8000/mcp  (Ctrl-C to stop)", fg="cyan")
         click.echo()
-        uvicorn.run(create_app(), host="0.0.0.0", port=8000)
+        uvicorn.run(create_app(), host="127.0.0.1", port=8000)
     else:
         click.echo("   Run  nfl-mcp serve  when you're ready.")
         click.echo()
@@ -221,7 +224,9 @@ def _build_server_config(config: dict) -> dict:
     """Build the MCP server JSON block for a client config file."""
     host = config.get("serve_host", "localhost")
     port = config.get("serve_port", 8000)
-    return {"url": f"http://{host}:{port}/mcp"}
+    # 0.0.0.0 is a bind address, not a connectable URL — use localhost for clients
+    display_host = "localhost" if host == "0.0.0.0" else host
+    return {"url": f"http://{display_host}:{port}/mcp"}
 
 
 def _claude_desktop_config_path() -> Path | None:
