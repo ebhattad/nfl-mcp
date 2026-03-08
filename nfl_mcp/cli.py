@@ -167,10 +167,20 @@ def init(start, end, skip_ingest):
     if click.confirm("  Configure an MCP client (Claude Desktop / VS Code)?", default=True):
         _setup_client_interactive(config)
 
+    # ── 5. Offer to start the server ───────────────────────────────────────
     click.echo()
     click.secho("🎉 Setup complete!", bold=True, fg="green")
-    click.echo("   Start asking questions about NFL data in your IDE.")
     click.echo()
+    click.echo("   The MCP server needs to be running for your IDE to connect.")
+    click.echo("   You can start it any time with:  nfl-mcp serve")
+    click.echo()
+    if click.confirm("  Start the server now?", default=True):
+        click.secho("   Starting server on http://0.0.0.0:8000/mcp  (Ctrl-C to stop)", fg="cyan")
+        click.echo()
+        uvicorn.run(create_app(), host="0.0.0.0", port=8000)
+    else:
+        click.echo("   Run  nfl-mcp serve  when you're ready.")
+        click.echo()
 
 
 # ── setup-client ───────────────────────────────────────────────────────────────

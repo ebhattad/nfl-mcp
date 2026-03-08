@@ -178,11 +178,11 @@ class TestInitAndSetupClient:
         )
         monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: setup_calls.append(cfg))
 
-        # Prompts: change DB path? -> no ; configure client? -> no
+        # Prompts: change DB path? -> no ; configure client? -> no ; start server? -> no
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024", "--skip-ingest"],
-            input="n\nn\n",
+            input="n\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -202,7 +202,7 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--skip-ingest"],
-            input="y\n/tmp/custom-nfl.duckdb\nn\n",
+            input="y\n/tmp/custom-nfl.duckdb\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -227,11 +227,11 @@ class TestInitAndSetupClient:
         )
         monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: None)
 
-        # Prompts: change DB path? -> no ; ingest now? -> default yes ; configure client? -> no
+        # Prompts: change DB path? -> no ; ingest now? -> default yes ; configure client? -> no ; start server? -> no
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024"],
-            input="n\n\nn\n",
+            input="n\n\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -251,7 +251,7 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--start", "2024", "--end", "2024"],
-            input="n\nn\nn\n",
+            input="n\nn\nn\nn\n",
         )
 
         assert result.exit_code == 0
@@ -266,11 +266,28 @@ class TestInitAndSetupClient:
         result = runner.invoke(
             main,
             ["init", "--skip-ingest"],
-            input="n\ny\n",
+            input="n\ny\nn\n",
         )
 
         assert result.exit_code == 0
         assert len(setup_calls) == 1
+
+    def test_init_starts_server_when_confirmed(self, runner, monkeypatch, tmp_path):
+        uvicorn_calls = []
+        monkeypatch.setattr("nfl_mcp.config.load_config", lambda: {})
+        monkeypatch.setattr("nfl_mcp.config.save_config", lambda cfg: tmp_path / "config.json")
+        monkeypatch.setattr("nfl_mcp.cli._setup_client_interactive", lambda cfg: None)
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: uvicorn_calls.append((host, port)))
+
+        # Prompts: change DB path? -> no ; configure client? -> no ; start server? -> yes
+        result = runner.invoke(
+            main,
+            ["init", "--skip-ingest"],
+            input="n\nn\ny\n",
+        )
+
+        assert result.exit_code == 0
+        assert uvicorn_calls == [("0.0.0.0", 8000)]
 
     def test_setup_client_routes_auto(self, runner, monkeypatch):
         called = []

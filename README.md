@@ -15,10 +15,10 @@ Ask Claude questions like:
 
 ```bash
 pip install nfl-mcp        # or: uvx nfl-mcp
-nfl-mcp init               # configure + load default datasets
+nfl-mcp init               # configure, load data, and start the server
 ```
 
-No database server to install. No credentials to manage. Data is stored locally in DuckDB.
+`init` walks you through setup and offers to start the server immediately when done. No database server to install. No credentials to manage. Data is stored locally in DuckDB.
 
 ## Prerequisites
 
@@ -37,6 +37,7 @@ The wizard will:
 1. Configure the local DuckDB database path
 2. Download the default NFL datasets (play-by-play, rosters, stats, injuries, and more)
 3. Auto-configure your IDE (Claude Desktop and/or VS Code)
+4. Offer to start the server immediately
 
 Options:
 
@@ -46,6 +47,8 @@ Options:
 
 ### 2. Start the server
 
+`init` offers to start the server for you. If you need to start it manually later:
+
 ```bash
 nfl-mcp serve                         # listens on http://0.0.0.0:8000/mcp
 nfl-mcp serve --port 9000             # custom port
@@ -53,6 +56,8 @@ nfl-mcp serve --host 127.0.0.1        # localhost only
 ```
 
 The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`.
+
+> **Note:** The server must be running for your IDE to connect. Run `nfl-mcp serve` in a terminal and keep it open.
 
 ### 3. Verify
 
