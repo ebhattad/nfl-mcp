@@ -393,7 +393,7 @@ class TestNflFantasyOpportunity:
         result = nfl_fantasy_opportunity(team="KC", position="WR", season=2024)
         assert "error" not in result
 
-    def test_missing_table_returns_error_not_crash(self):
+    def test_future_season_returns_dict(self):
         result = nfl_fantasy_opportunity(season=2099)
         assert isinstance(result, dict)
 
