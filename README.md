@@ -44,7 +44,17 @@ Options:
 --skip-ingest       Configure without loading data
 ```
 
-### 2. Verify
+### 2. Start the server
+
+```bash
+nfl-mcp serve                         # listens on http://0.0.0.0:8000/mcp
+nfl-mcp serve --port 9000             # custom port
+nfl-mcp serve --host 127.0.0.1        # localhost only
+```
+
+The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`.
+
+### 3. Verify
 
 ```bash
 nfl-mcp doctor
@@ -52,7 +62,7 @@ nfl-mcp doctor
 
 Checks database connectivity, loaded data, and IDE configuration.
 
-### 3. Manual client configuration (optional)
+### 4. Manual client configuration (optional)
 
 If you skipped IDE setup during init, or need to reconfigure:
 
@@ -62,14 +72,25 @@ nfl-mcp setup-client --client vscode    # VS Code only
 nfl-mcp setup-client --client claude-desktop
 ```
 
-Or configure manually — add to `.vscode/mcp.json`:
+Or configure manually. Add to `.vscode/mcp.json` (VS Code):
 
 ```json
 {
   "servers": {
     "nfl": {
-      "command": "uvx",
-      "args": ["nfl-mcp", "serve"]
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "nfl": {
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
@@ -79,10 +100,17 @@ Or configure manually — add to `.vscode/mcp.json`:
 
 ```
 nfl-mcp init               Interactive setup wizard
-nfl-mcp serve              Start the MCP server (stdio)
+nfl-mcp serve              Start the MCP server (Streamable HTTP, default port 8000)
 nfl-mcp ingest             Load NFL data into the database
 nfl-mcp setup-client       Configure IDE MCP clients
 nfl-mcp doctor             Health check
+```
+
+### Serve options
+
+```bash
+nfl-mcp serve --host 0.0.0.0 --port 8000   # defaults
+nfl-mcp serve --port 9000
 ```
 
 ### Ingestion options
@@ -176,6 +204,7 @@ cd nfl-mcp
 pip install -e ".[dev]"
 
 nfl-mcp ingest --dataset all --start 2024 --end 2024
+nfl-mcp serve   # server available at http://localhost:8000/mcp
 pytest
 pytest -m unit     # unit tests
 pytest -m integration  # integration tests (requires loaded DB)

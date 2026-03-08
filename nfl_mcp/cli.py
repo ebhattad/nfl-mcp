@@ -10,7 +10,6 @@ NFL MCP — command-line entry point
 
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -208,20 +207,11 @@ def _setup_client_interactive(config: dict):
                 _configure_vscode(config)
 
 
-def _resolve_server_command() -> tuple[str, list[str]]:
-    """Figure out the best command to start the MCP server."""
-    if shutil.which("uvx"):
-        return "uvx", ["nfl-mcp", "serve"]
-    nfl_mcp_bin = shutil.which("nfl-mcp")
-    if nfl_mcp_bin:
-        return nfl_mcp_bin, ["serve"]
-    return sys.executable, ["-m", "nfl_mcp.cli", "serve"]
-
-
 def _build_server_config(config: dict) -> dict:
     """Build the MCP server JSON block for a client config file."""
-    cmd, args = _resolve_server_command()
-    return {"command": cmd, "args": args}
+    host = config.get("serve_host", "localhost")
+    port = config.get("serve_port", 8000)
+    return {"url": f"http://{host}:{port}/mcp"}
 
 
 def _claude_desktop_config_path() -> Path | None:

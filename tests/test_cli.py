@@ -322,34 +322,13 @@ class TestCliHelpers:
         cli._setup_client_interactive({"duckdb_path": "/tmp/db.duckdb"})
         assert configured == ["vscode"]
 
-    def test_resolve_server_command_prefers_uvx(self, monkeypatch):
-        monkeypatch.setattr(
-            "nfl_mcp.cli.shutil.which",
-            lambda name: "/usr/local/bin/uvx" if name == "uvx" else None,
-        )
-        cmd, args = cli._resolve_server_command()
-        assert cmd == "uvx"
-        assert args == ["nfl-mcp", "serve"]
-
-    def test_resolve_server_command_uses_nfl_mcp_binary_when_uvx_missing(self, monkeypatch):
-        monkeypatch.setattr(
-            "nfl_mcp.cli.shutil.which",
-            lambda name: "/usr/local/bin/nfl-mcp" if name == "nfl-mcp" else None,
-        )
-        cmd, args = cli._resolve_server_command()
-        assert cmd == "/usr/local/bin/nfl-mcp"
-        assert args == ["serve"]
-
-    def test_resolve_server_command_falls_back_to_python_module(self, monkeypatch):
-        monkeypatch.setattr("nfl_mcp.cli.shutil.which", lambda name: None)
-        cmd, args = cli._resolve_server_command()
-        assert cmd == cli.sys.executable
-        assert args == ["-m", "nfl_mcp.cli", "serve"]
-
-    def test_build_server_config_uses_resolved_command(self, monkeypatch):
-        monkeypatch.setattr("nfl_mcp.cli._resolve_server_command", lambda: ("uvx", ["nfl-mcp", "serve"]))
+    def test_build_server_config_default_url(self):
         result = cli._build_server_config({})
-        assert result == {"command": "uvx", "args": ["nfl-mcp", "serve"]}
+        assert result == {"url": "http://localhost:8000/mcp"}
+
+    def test_build_server_config_custom_host_port(self):
+        result = cli._build_server_config({"serve_host": "0.0.0.0", "serve_port": 9000})
+        assert result == {"url": "http://0.0.0.0:9000/mcp"}
 
     @pytest.mark.parametrize("platform_name,env_var,expected_parts", [
         ("darwin", None, ("Library", "Application Support", "Claude", "claude_desktop_config.json")),

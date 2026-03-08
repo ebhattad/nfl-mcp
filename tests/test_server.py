@@ -62,3 +62,40 @@ def test_create_app_returns_starlette_app():
     assert isinstance(app, Starlette)
     route_paths = [r.path for r in app.routes]
     assert "/mcp" in route_paths
+
+
+def test_create_app_lifespan_runs(monkeypatch):
+    """Exercise the lifespan context manager (lines 480-483) with a mocked session manager."""
+    import contextlib
+    import asyncio
+    from starlette.testclient import TestClient
+
+    entered = []
+    exited = []
+
+    @contextlib.asynccontextmanager
+    async def fake_run():
+        entered.append(True)
+        yield
+        exited.append(True)
+
+    # Patch StreamableHTTPSessionManager so .run() uses our fake
+    import nfl_mcp.server as srv
+    original_manager_class = srv.StreamableHTTPSessionManager
+
+    class FakeManager:
+        def __init__(self, *args, **kwargs):
+            pass
+        def run(self):
+            return fake_run()
+        async def handle_request(self, scope, receive, send):
+            pass
+
+    monkeypatch.setattr(srv, "StreamableHTTPSessionManager", FakeManager)
+    app = srv.create_app()
+
+    with TestClient(app):
+        pass  # triggers lifespan startup and shutdown
+
+    assert entered == [True]
+    assert exited == [True]
