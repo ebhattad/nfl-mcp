@@ -49,9 +49,13 @@ def _normalize_player_name(name: str) -> str:
     'Jefferson'        -> 'Jefferson'   (last name only, pass through)
     """
     parts = name.strip().split()
-    if len(parts) == 2 and len(parts[0]) > 2 and '.' not in parts[0]:
-        return f"{parts[0][0]}.{parts[1]}"
-    return name
+    if len(parts) == 1:
+        return name
+    if '.' in parts[0]:
+        return name
+    first = parts[0]
+    last = ' '.join(parts[1:])
+    return f"{first[0]}.{last}"
 
 
 def nfl_schema(category: str | None = None, table: str | None = None) -> Dict[str, Any]:
