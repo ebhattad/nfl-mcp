@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -euo pipefail
 
 DB_DIR="/data"
 SYMLINK="$DB_DIR/nflread.duckdb"
