@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 RUN pip install uv && uv pip install --system nfl-mcp
 
 # Overwrite with local patched file
-COPY nfl_mcp/tools.py /usr/local/lib/python3.12/dist-packages/nfl_mcp/tools.py
+COPY nfl_mcp/tools.py /usr/local/lib/python3.12/site-packages/nfl_mcp/tools.py
 
 RUN mkdir -p /data /var/log/nflmcp && chmod 777 /var/log/nflmcp
 
