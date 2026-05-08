@@ -39,6 +39,25 @@ _MAX_ROWS = 500
 _QUERY_TIMEOUT_SECONDS = 10
 
 
+# ── Player name normalization ──────────────────────────────────────────────────
+
+def _normalize_player_name(name: str) -> str:
+    """
+    Convert full names to nflverse short format.
+    'Justin Jefferson' -> 'J.Jefferson'
+    'J.Jefferson'      -> 'J.Jefferson' (pass through)
+    'Jefferson'        -> 'Jefferson'   (last name only, pass through)
+    """
+    parts = name.strip().split()
+    if len(parts) == 1:
+        return name
+    if '.' in parts[0]:
+        return name
+    first = parts[0]
+    last = ' '.join(parts[1:])
+    return f"{first[0]}.{last}"
+
+
 def nfl_schema(category: str | None = None, table: str | None = None) -> Dict[str, Any]:
     """Return schema reference. Summary by default, or a specific category for detail.
     Pass table='<name>' to get the live column list for any non-pbp table."""
@@ -196,6 +215,7 @@ def nfl_search_plays(
         conditions.append("defteam = ?")
         params.append(opponent)
     if player:
+        player = _normalize_player_name(player)
         conditions.append(
             "(passer_player_name ILIKE ? "
             "OR rusher_player_name ILIKE ? "
@@ -298,6 +318,7 @@ def nfl_player_stats(
     stat_type: str = "passing",
 ) -> Dict[str, Any]:
     """Aggregate player stats by season."""
+    player_name = _normalize_player_name(player_name)
     params: list[Any] = []
 
     if stat_type == "passing":
@@ -434,6 +455,7 @@ def nfl_compare(
 
             result = {}
             for p, label in [(e1, entity1), (e2, entity2)]:
+                p = _normalize_player_name(p)
                 stats = {}
                 for stype, col, ptype in [
                     ("passing", "passer_player_name", "pass"),
@@ -667,6 +689,7 @@ def nfl_snap_counts(
     """
     conditions, params = [], []
     if player:
+        player = _normalize_player_name(player)
         conditions.append("player ILIKE ?")
         params.append(f"%{player}%")
     if team:
