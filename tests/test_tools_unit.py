@@ -8,6 +8,13 @@ import pytest
 import nfl_mcp.tools as tools
 
 
+def test_normalize_player_name_handles_full_short_and_last_name_inputs():
+    assert tools._normalize_player_name("Mahomes") == "Mahomes"
+    assert tools._normalize_player_name("J.Jefferson") == "J.Jefferson"
+    assert tools._normalize_player_name("Justin Jefferson") == "J.Jefferson"
+    assert tools._normalize_player_name("J. Jefferson") == "J. Jefferson"
+
+
 def test_search_plays_uses_parameterized_filters(monkeypatch):
     captured = {}
 
@@ -59,6 +66,20 @@ def test_player_stats_uses_parameterized_player_name(monkeypatch):
     assert captured["params"][0] == "%P.Mahomes%"
     assert captured["params"][1] == "pass"
     assert captured["params"][-1] == "REG"
+
+
+def test_player_stats_normalizes_full_player_name(monkeypatch):
+    captured = {}
+
+    def fake_execute(sql, params=None):
+        captured["sql"] = sql
+        captured["params"] = params
+        return []
+
+    monkeypatch.setattr(tools, "_execute", fake_execute)
+    tools.nfl_player_stats(player_name="Justin Jefferson", stat_type="passing")
+
+    assert captured["params"][0] == "%J.Jefferson%"
 
 
 def test_compare_team_does_not_interpolate_user_input(monkeypatch):
