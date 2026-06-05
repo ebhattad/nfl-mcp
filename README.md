@@ -20,6 +20,20 @@ nfl-mcp init               # configure, load data, and start the server
 
 `init` walks you through setup and offers to start the server immediately when done. No database server to install. No credentials to manage. Data is stored locally in DuckDB.
 
+## Deploy to Azure
+
+Run the server in the cloud as an [Azure Container App](https://learn.microsoft.com/azure/container-apps/) with one click:
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Febhattad%2Fnfl-mcp%2Fmain%2Finfra%2Fazuredeploy.json)
+
+The button opens the Azure portal's **Custom deployment** blade prefilled from [`infra/azuredeploy.json`](infra/azuredeploy.json). Pick a resource group, then **Create**. It provisions a Container Apps Environment, a Log Analytics workspace, and the Container App (public HTTPS ingress on port 8000). When the deployment finishes, the `mcpUrl` output is your endpoint — point any MCP client at `https://<app>.<region>.azurecontainerapps.io/mcp`.
+
+> **Storage is ephemeral.** The DuckDB database lives on the replica's local disk. On first start (and on every restart/redeploy) the container runs a full `nfl-mcp ingest`, so the **first request after deploy can take several minutes** while data downloads. The replica is pinned to a single instance (`minReplicas = maxReplicas = 1`) so the database and weekly cron updater stay consistent.
+
+**One-time setup before the button works:**
+1. The [`Publish container image`](.github/workflows/docker.yml) workflow must have pushed an image to `ghcr.io/ebhattad/nfl-mcp` (it runs on each GitHub release, or trigger it manually via *Actions → Run workflow*).
+2. Make that GHCR package **public**: repo → *Packages* → `nfl-mcp` → *Package settings* → *Change visibility → Public*. The ARM template pulls the image without credentials, so it must be public.
+
 ## Prerequisites
 
 - Python 3.10+
