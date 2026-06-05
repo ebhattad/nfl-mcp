@@ -8,11 +8,31 @@ Called by: nfl-mcp init / nfl-mcp ingest
 """
 
 import datetime
+import os
 import duckdb
 import polars as pl
+from pathlib import Path
 from tqdm import tqdm
 
 ALL_SEASONS = list(range(2013, 2026))
+
+
+def _apply_duckdb_pragmas(conn: duckdb.DuckDBPyConnection, db_path: str) -> None:
+    """Bound DuckDB memory so large ingests spill to disk instead of being OOM-killed.
+
+    Driven by env vars so containers/CI can cap memory (e.g. when baking the
+    database into a Docker image) while local runs keep DuckDB's defaults:
+      NFL_MCP_DUCKDB_MEMORY_LIMIT  e.g. '5GB'
+      NFL_MCP_DUCKDB_THREADS       e.g. '2'
+    """
+    mem = os.getenv("NFL_MCP_DUCKDB_MEMORY_LIMIT")
+    if mem:
+        conn.execute(f"SET memory_limit='{mem}'")
+        spill = str(Path(db_path).parent / ".duckdb_spill")
+        conn.execute(f"SET temp_directory='{spill}'")
+    threads = os.getenv("NFL_MCP_DUCKDB_THREADS")
+    if threads:
+        conn.execute(f"SET threads={int(threads)}")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -559,6 +579,7 @@ def run_ingest_datasets(
     from pathlib import Path
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(path)
+    _apply_duckdb_pragmas(conn, path)
 
     _ensure_metadata_table(conn)
 

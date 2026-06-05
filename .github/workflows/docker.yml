@@ -3,6 +3,9 @@ name: Publish container image
 on:
   release:
     types: [published]
+  schedule:
+    # Thursday 08:00 UTC — rebuild the image with refreshed NFL data
+    - cron: "0 8 * * 4"
   workflow_dispatch:
 
 env:

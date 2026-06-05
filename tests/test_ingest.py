@@ -10,6 +10,7 @@ import pytest
 
 from nfl_mcp.registry import DatasetDef
 from nfl_mcp.ingest import (
+    _apply_duckdb_pragmas,
     _build_enhanced_description,
     _create_aggregate_tables,
     _create_indexes,
@@ -737,3 +738,25 @@ class TestRunIngestValidation:
     def test_raises_for_start_greater_than_end(self):
         with pytest.raises(ValueError, match="start must be less than or equal to end"):
             run_ingest_datasets(["pbp"], start=2025, end=2020)
+
+
+# ── _apply_duckdb_pragmas ─────────────────────────────────────────────────────
+
+class TestApplyDuckdbPragmas:
+    def test_applies_memory_limit_threads_and_spill(self, conn, monkeypatch, tmp_path):
+        monkeypatch.setenv("NFL_MCP_DUCKDB_MEMORY_LIMIT", "256MB")
+        monkeypatch.setenv("NFL_MCP_DUCKDB_THREADS", "1")
+        db_path = str(tmp_path / "sub" / "nflread.duckdb")
+        _apply_duckdb_pragmas(conn, db_path)
+        mem = conn.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+        assert "MiB" in mem or "MB" in mem
+        assert conn.execute("SELECT current_setting('threads')").fetchone()[0] == 1
+        spill = conn.execute("SELECT current_setting('temp_directory')").fetchone()[0]
+        assert spill.endswith(".duckdb_spill")
+
+    def test_noop_when_env_unset(self, conn, monkeypatch):
+        monkeypatch.delenv("NFL_MCP_DUCKDB_MEMORY_LIMIT", raising=False)
+        monkeypatch.delenv("NFL_MCP_DUCKDB_THREADS", raising=False)
+        default_threads = conn.execute("SELECT current_setting('threads')").fetchone()[0]
+        _apply_duckdb_pragmas(conn, "/tmp/nflread.duckdb")
+        assert conn.execute("SELECT current_setting('threads')").fetchone()[0] == default_threads
