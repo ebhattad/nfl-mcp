@@ -28,10 +28,10 @@ Run the server in the cloud as an [Azure Container App](https://learn.microsoft.
 
 The button opens the Azure portal's **Custom deployment** blade prefilled from [`infra/azuredeploy.json`](infra/azuredeploy.json). Pick a resource group, then **Create**. It provisions a Container Apps Environment, a Log Analytics workspace, and the Container App (public HTTPS ingress on port 8000). When the deployment finishes, the `mcpUrl` output is your endpoint — point any MCP client at `https://<app>.<region>.azurecontainerapps.io/mcp`.
 
-> **Storage is ephemeral.** The DuckDB database lives on the replica's local disk. On first start (and on every restart/redeploy) the container runs a full `nfl-mcp ingest`, so the **first request after deploy can take several minutes** while data downloads. The replica is pinned to a single instance (`minReplicas = maxReplicas = 1`) so the database and weekly cron updater stay consistent.
+> **The data is baked into the image.** The full DuckDB database is built into the container image at build time, so the app serves read-only with **no runtime ingest** — it starts instantly, never re-downloads data, needs no external storage, and runs comfortably on `0.5` vCPU / `1Gi`. To refresh the data, rebuild the image (re-run the publish workflow); the [`Publish container image`](.github/workflows/docker.yml) workflow also rebuilds weekly. The replica is pinned to a single instance (`minReplicas = maxReplicas = 1`).
 
 **One-time setup before the button works:**
-1. The [`Publish container image`](.github/workflows/docker.yml) workflow must have pushed an image to `ghcr.io/ebhattad/nfl-mcp` (it runs on each GitHub release, or trigger it manually via *Actions → Run workflow*).
+1. The [`Publish container image`](.github/workflows/docker.yml) workflow must have pushed an image to `ghcr.io/ebhattad/nfl-mcp` (it runs weekly, on each GitHub release, or manually via *Actions → Run workflow*). The build ingests all default datasets, so it takes longer than a normal image build.
 2. Make that GHCR package **public**: repo → *Packages* → `nfl-mcp` → *Package settings* → *Change visibility → Public*. The ARM template pulls the image without credentials, so it must be public.
 
 ## Prerequisites

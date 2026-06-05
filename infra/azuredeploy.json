@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "description": "Deploys nfl-mcp as an Azure Container App. Storage is ephemeral (Option A): the DuckDB database is re-ingested on first start and on every restart/redeploy."
+    "description": "Deploys nfl-mcp as an Azure Container App. The DuckDB database is baked into the container image at build time, so the app serves read-only with no runtime ingest, no external storage, and instant startup."
   },
   "parameters": {
     "appName": {
@@ -28,14 +28,14 @@
     },
     "cpu": {
       "type": "string",
-      "defaultValue": "1.0",
+      "defaultValue": "0.5",
       "metadata": {
-        "description": "vCPU cores allocated to the container."
+        "description": "vCPU cores allocated to the container (read-only serving is light)."
       }
     },
     "memory": {
       "type": "string",
-      "defaultValue": "2Gi",
+      "defaultValue": "1Gi",
       "metadata": {
         "description": "Memory allocated to the container (must pair validly with cpu)."
       }
@@ -116,10 +116,10 @@
                   "tcpSocket": {
                     "port": 8000
                   },
-                  "initialDelaySeconds": 60,
-                  "periodSeconds": 240,
-                  "timeoutSeconds": 10,
-                  "failureThreshold": 10
+                  "initialDelaySeconds": 3,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 5,
+                  "failureThreshold": 6
                 }
               ]
             }
