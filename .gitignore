@@ -29,5 +29,6 @@ coverage.xml
 htmlcov/
 
 # DuckDB local databases
+data/
 *.duckdb
 *.duckdb.wal
