@@ -74,9 +74,8 @@ def ingest(datasets, start, end, fresh, skip_views, list_datasets):
     if list_datasets:
         click.echo("\nAvailable datasets:\n")
         for ds_id, defn in REGISTRY.items():
-            default_tag = "[default] " if defn.default else ""
-            marker = f"{default_tag}[wave {defn.wave}]"
-            click.echo(f"  {ds_id:<35} {marker}  {defn.description}")
+            default_tag = "[default]" if defn.default else ""
+            click.echo(f"  {ds_id:<35} {default_tag:<10}  {defn.description}")
         click.echo()
         return
 

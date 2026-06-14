@@ -62,11 +62,6 @@ class TestIngestList:
         result = runner.invoke(main, ["ingest", "--list"])
         assert "[default]" in result.output
 
-    def test_list_marks_wave_datasets(self, runner):
-        result = runner.invoke(main, ["ingest", "--list"])
-        assert "[wave 2]" in result.output
-        assert "[wave 3]" in result.output
-
     def test_list_does_not_start_ingest(self, runner, monkeypatch):
         called = []
         monkeypatch.setattr("nfl_mcp.ingest.run_ingest_datasets",

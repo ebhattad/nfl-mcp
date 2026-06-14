@@ -522,6 +522,306 @@ def _create_aggregate_tables(conn: duckdb.DuckDBPyConnection):
     print("  Aggregate tables done")
 
 
+def _table_exists(conn: duckdb.DuckDBPyConnection, name: str) -> bool:
+    """Return True if a base table named `name` exists in the main schema."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM information_schema.tables "
+        "WHERE table_schema = 'main' AND table_name = ?",
+        [name],
+    ).fetchone()
+    return (row[0] or 0) > 0
+
+
+# Each fantasy derived table: (table_name, [required source tables], CREATE-AS SELECT body).
+# All are built at ingest time so the MCP tools never compute at query time.
+_FANTASY_TABLES: list[tuple[str, list[str], str]] = [
+    # 1. TD luck — actual vs expected touchdowns per player-season (most "unlucky" first).
+    ("player_td_luck", ["ff_opportunity"], """
+        SELECT
+            player_id,
+            ANY_VALUE(full_name)            AS full_name,
+            ANY_VALUE(position)             AS position,
+            ANY_VALUE(posteam)              AS team,
+            CAST(season AS INTEGER)         AS season,
+            SUM(rec_touchdown)              AS rec_td,
+            SUM(rec_touchdown_exp)          AS rec_td_exp,
+            SUM(rec_touchdown_diff)         AS rec_td_luck,
+            SUM(rush_touchdown)             AS rush_td,
+            SUM(rush_touchdown_exp)         AS rush_td_exp,
+            SUM(rush_touchdown_diff)        AS rush_td_luck,
+            ROUND(SUM(rec_touchdown_diff) + SUM(rush_touchdown_diff), 3) AS total_td_luck_score
+        FROM ff_opportunity
+        WHERE player_id IS NOT NULL
+        GROUP BY player_id, CAST(season AS INTEGER)
+    """),
+
+    # 2. Rolling 3-week role trend — snap / target / carry / air-yards share with
+    #    a trailing 3-week average and the current-week delta vs that average.
+    ("player_role_trend", ["ff_opportunity", "snap_counts"], """
+        WITH base AS (
+            SELECT
+                o.player_id,
+                o.full_name,
+                o.position,
+                o.posteam                                   AS team,
+                CAST(o.season AS INTEGER)                   AS season,
+                CAST(o.week AS INTEGER)                      AS week,
+                ROUND(100.0 * s.offense_pct, 2)             AS snap_pct,
+                ROUND(100.0 * o.rec_attempt  / NULLIF(o.rec_attempt_team, 0), 2)   AS target_share_pct,
+                ROUND(100.0 * o.rush_attempt / NULLIF(o.rush_attempt_team, 0), 2)  AS carry_share_pct,
+                ROUND(100.0 * o.rec_air_yards / NULLIF(o.rec_air_yards_team, 0), 2) AS air_yards_share_pct
+            FROM ff_opportunity o
+            LEFT JOIN snap_counts s
+              ON s.player  = o.full_name
+             AND s.team    = o.posteam
+             AND s.season  = CAST(o.season AS INTEGER)
+             AND s.week    = CAST(o.week AS INTEGER)
+            WHERE o.player_id IS NOT NULL
+        )
+        SELECT
+            player_id, full_name, position, team, season, week,
+            snap_pct, target_share_pct, carry_share_pct, air_yards_share_pct,
+            ROUND(AVG(snap_pct)            OVER w, 2) AS snap_pct_3wk,
+            ROUND(AVG(target_share_pct)    OVER w, 2) AS target_share_pct_3wk,
+            ROUND(AVG(carry_share_pct)     OVER w, 2) AS carry_share_pct_3wk,
+            ROUND(AVG(air_yards_share_pct) OVER w, 2) AS air_yards_share_pct_3wk,
+            ROUND(snap_pct            - AVG(snap_pct)            OVER w, 2) AS snap_pct_delta,
+            ROUND(target_share_pct    - AVG(target_share_pct)    OVER w, 2) AS target_share_pct_delta,
+            ROUND(carry_share_pct     - AVG(carry_share_pct)     OVER w, 2) AS carry_share_pct_delta,
+            ROUND(air_yards_share_pct - AVG(air_yards_share_pct) OVER w, 2) AS air_yards_share_pct_delta
+        FROM base
+        WINDOW w AS (PARTITION BY player_id, season ORDER BY week ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+    """),
+
+    # 3. Separation-adjusted opportunity — joins Next Gen Stats receiving (2016+) to
+    #    fantasy opportunity to flag separation-creators who underproduced (regression up).
+    ("player_separation_opportunity", ["ff_opportunity", "nextgen_stats_receiving"], """
+        WITH ng AS (
+            SELECT
+                player_gsis_id,
+                season,
+                AVG(avg_separation)              AS avg_separation,
+                AVG(avg_yac_above_expectation)   AS avg_yac_above_expectation,
+                AVG(catch_percentage)            AS catch_percentage
+            FROM nextgen_stats_receiving
+            WHERE week > 0 AND player_gsis_id IS NOT NULL
+            GROUP BY player_gsis_id, season
+        ),
+        opp AS (
+            SELECT
+                player_id,
+                ANY_VALUE(full_name)   AS full_name,
+                ANY_VALUE(position)    AS position,
+                ANY_VALUE(posteam)     AS team,
+                CAST(season AS INTEGER) AS season,
+                COUNT(DISTINCT week)   AS games,
+                SUM(total_fantasy_points_diff) AS fp_diff,
+                ROUND(SUM(total_fantasy_points_diff) / NULLIF(COUNT(DISTINCT week), 0), 3) AS fp_diff_per_game,
+                ROUND(SUM(rec_touchdown_diff), 3) AS td_luck,
+                ROUND(SUM(receptions_diff), 3)    AS catch_luck,
+                ROUND(100.0 * SUM(rec_attempt)  / NULLIF(SUM(rec_attempt_team), 0), 2)  AS target_share_pct,
+                ROUND(100.0 * SUM(rec_air_yards) / NULLIF(SUM(rec_air_yards_team), 0), 2) AS air_yards_share_pct
+            FROM ff_opportunity
+            WHERE player_id IS NOT NULL
+            GROUP BY player_id, CAST(season AS INTEGER)
+        )
+        SELECT
+            opp.player_id, opp.full_name, opp.position, opp.team, opp.season,
+            opp.games, opp.fp_diff, opp.fp_diff_per_game, opp.td_luck, opp.catch_luck,
+            opp.target_share_pct, opp.air_yards_share_pct,
+            ROUND(ng.avg_separation, 3)            AS avg_separation,
+            ROUND(ng.avg_yac_above_expectation, 3) AS avg_yac_above_expectation,
+            ROUND(ng.catch_percentage, 2)          AS catch_percentage,
+            (ng.avg_separation > 2.5 AND opp.fp_diff_per_game < -1.5 AND opp.td_luck < -1.0) AS regression_candidate
+        FROM opp
+        JOIN ng ON ng.player_gsis_id = opp.player_id AND ng.season = opp.season
+    """),
+
+    # 4. Drop rate — catchable-target drop rate from FTN charting (2022+) joined to plays.
+    ("player_drop_rate", ["ftn_charting", "plays"], """
+        SELECT
+            p.receiver_player_id                AS player_id,
+            ANY_VALUE(p.receiver_player_name)   AS player,
+            p.posteam                           AS team,
+            p.season                            AS season,
+            COUNT(*)                            AS catchable_targets,
+            SUM(CASE WHEN f.is_drop THEN 1 ELSE 0 END)              AS drops,
+            ROUND(100.0 * SUM(CASE WHEN f.is_drop THEN 1 ELSE 0 END)
+                / NULLIF(COUNT(*), 0), 2)       AS drop_rate_pct,
+            SUM(CASE WHEN f.is_contested_ball THEN 1 ELSE 0 END)    AS contested_targets,
+            SUM(CASE WHEN f.is_created_reception THEN 1 ELSE 0 END) AS created_receptions
+        FROM ftn_charting f
+        JOIN plays p
+          ON f.nflverse_game_id = p.game_id
+         AND f.nflverse_play_id = p.play_id
+        WHERE f.is_catchable_ball = TRUE
+          AND p.receiver_player_id IS NOT NULL
+        GROUP BY p.receiver_player_id, p.posteam, p.season
+    """),
+
+    # 5. Contract value efficiency — fantasy points per $M of average per year (APY),
+    #    using each player's active contract joined to seasonal fantasy production.
+    ("player_contract_value", ["contracts", "ff_opportunity"], """
+        WITH active AS (
+            SELECT
+                gsis_id,
+                ANY_VALUE(position)   AS position,
+                ANY_VALUE(team)       AS team,
+                MAX(apy)              AS apy,
+                MAX(apy_cap_pct)      AS cap_pct
+            FROM contracts
+            WHERE is_active = TRUE AND gsis_id IS NOT NULL
+            GROUP BY gsis_id
+        ),
+        opp AS (
+            SELECT
+                player_id,
+                ANY_VALUE(full_name)   AS full_name,
+                ANY_VALUE(position)    AS position,
+                ANY_VALUE(posteam)     AS team,
+                CAST(season AS INTEGER) AS season,
+                SUM(total_fantasy_points)     AS total_fp,
+                SUM(total_fantasy_points_exp) AS total_fp_exp
+            FROM ff_opportunity
+            WHERE player_id IS NOT NULL
+            GROUP BY player_id, CAST(season AS INTEGER)
+        )
+        SELECT
+            opp.player_id,
+            opp.full_name,
+            COALESCE(opp.position, active.position) AS position,
+            opp.team,
+            opp.season,
+            ROUND(active.apy, 4)       AS apy,
+            ROUND(active.cap_pct, 4)   AS cap_pct,
+            ROUND(opp.total_fp, 2)     AS total_fp,
+            ROUND(opp.total_fp_exp, 2) AS total_fp_exp,
+            ROUND(opp.total_fp / NULLIF(active.apy, 0), 2) AS fp_per_million
+        FROM opp
+        JOIN active ON active.gsis_id = opp.player_id
+    """),
+
+    # 6. Injury return curve — post-return snap-share recovery (as % of pre-injury
+    #    baseline) at +1..+8 weeks, bucketed by normalized injury type and position.
+    ("injury_return_curve", ["injuries", "snap_counts"], """
+        WITH outs AS (
+            SELECT
+                gsis_id,
+                full_name,
+                position,
+                CAST(season AS INTEGER) AS season,
+                CAST(week AS INTEGER)   AS week,
+                LOWER(TRIM(COALESCE(report_primary_injury, practice_primary_injury))) AS injury_raw
+            FROM injuries
+            WHERE report_status = 'Out'
+              AND gsis_id IS NOT NULL
+              AND COALESCE(report_primary_injury, practice_primary_injury) IS NOT NULL
+        ),
+        typed AS (
+            SELECT *,
+                CASE
+                    WHEN injury_raw LIKE '%hamstring%'  THEN 'hamstring'
+                    WHEN injury_raw LIKE '%knee%'       THEN 'knee'
+                    WHEN injury_raw LIKE '%ankle%'      THEN 'ankle'
+                    WHEN injury_raw LIKE '%shoulder%'   THEN 'shoulder'
+                    WHEN injury_raw LIKE '%concussion%' THEN 'concussion'
+                    WHEN injury_raw LIKE '%groin%'      THEN 'groin'
+                    WHEN injury_raw LIKE '%foot%'       THEN 'foot'
+                    WHEN injury_raw LIKE '%calf%'       THEN 'calf'
+                    WHEN injury_raw LIKE '%hip%'        THEN 'hip'
+                    WHEN injury_raw LIKE '%back%'       THEN 'back'
+                    WHEN injury_raw LIKE '%quad%'       THEN 'quadriceps'
+                    WHEN injury_raw LIKE '%achilles%'   THEN 'achilles'
+                    WHEN injury_raw LIKE '%wrist%'      THEN 'wrist'
+                    WHEN injury_raw LIKE '%hand%'       THEN 'hand'
+                    WHEN injury_raw LIKE '%elbow%'      THEN 'elbow'
+                    WHEN injury_raw LIKE '%toe%'        THEN 'toe'
+                    WHEN injury_raw LIKE '%thigh%'      THEN 'thigh'
+                    WHEN injury_raw LIKE '%neck%'       THEN 'neck'
+                    WHEN injury_raw LIKE '%rib%'        THEN 'ribs'
+                    WHEN injury_raw LIKE '%pectoral%'   THEN 'pectoral'
+                    ELSE 'other'
+                END AS injury_type
+            FROM outs
+        ),
+        islands AS (
+            SELECT *,
+                week - ROW_NUMBER() OVER (PARTITION BY gsis_id, season ORDER BY week) AS island
+            FROM typed
+        ),
+        spells AS (
+            SELECT
+                gsis_id,
+                ANY_VALUE(full_name) AS full_name,
+                ANY_VALUE(position)  AS position,
+                season,
+                MODE(injury_type)    AS injury_type,
+                MIN(week)            AS first_out_week,
+                MAX(week)            AS last_out_week
+            FROM islands
+            GROUP BY gsis_id, season, island
+        ),
+        baseline AS (
+            SELECT
+                sp.gsis_id, sp.full_name, sp.position, sp.season,
+                sp.injury_type, sp.first_out_week, sp.last_out_week,
+                AVG(sn.offense_pct) AS baseline_pct
+            FROM spells sp
+            JOIN snap_counts sn
+              ON sn.player = sp.full_name
+             AND sn.season = sp.season
+             AND sn.week   < sp.first_out_week
+            GROUP BY sp.gsis_id, sp.full_name, sp.position, sp.season,
+                     sp.injury_type, sp.first_out_week, sp.last_out_week
+        ),
+        curve AS (
+            SELECT
+                b.injury_type,
+                b.position,
+                (sn.week - b.last_out_week) AS week_post_return,
+                100.0 * sn.offense_pct / NULLIF(b.baseline_pct, 0) AS recovery_pct
+            FROM baseline b
+            JOIN snap_counts sn
+              ON sn.player = b.full_name
+             AND sn.season = b.season
+             AND sn.week   > b.last_out_week
+             AND sn.week  <= b.last_out_week + 8
+            WHERE b.baseline_pct > 0
+        )
+        SELECT
+            injury_type,
+            position,
+            week_post_return,
+            ROUND(AVG(recovery_pct), 1)    AS avg_snap_pct_recovery,
+            ROUND(MEDIAN(recovery_pct), 1) AS median_snap_pct_recovery,
+            COUNT(*)                       AS sample_size
+        FROM curve
+        GROUP BY injury_type, position, week_post_return
+    """),
+]
+
+
+def _create_fantasy_tables(conn: duckdb.DuckDBPyConnection):
+    """Build the fantasy-analytics derived tables from already-ingested source data.
+
+    Each table is fully recomputed (DROP + CREATE TABLE AS) and recorded in
+    _ingest_metadata as a 'derived' dataset so it surfaces in nfl_catalog / nfl_status.
+    Tables whose source data isn't present yet are skipped gracefully.
+    """
+    print("\n  Creating fantasy derived tables…")
+    for table_name, sources, body in _FANTASY_TABLES:
+        missing = [s for s in sources if not _table_exists(conn, s)]
+        if missing:
+            print(f"    {table_name} — skipped (missing sources: {', '.join(missing)})")
+            continue
+        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        conn.execute(f"CREATE TABLE {table_name} AS {body}")
+        row_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+        _record_loaded(conn, table_name, table_name, "derived", row_count, season=None)
+        print(f"    {table_name} ✓ ({row_count:,} rows)")
+    print("  Fantasy derived tables done")
+
+
 def _create_indexes(conn: duckdb.DuckDBPyConnection):
     print("\n  Creating indexes…")
     for idx_sql in [
@@ -634,6 +934,10 @@ def run_ingest_datasets(
                 print(f"\n  WARNING: unknown dataset '{dataset_id}', skipping")
                 continue
             _ingest_generic_dataset(conn, defn, seasons, fresh=fresh)
+
+    # ── Fantasy derived tables (built from already-ingested sources) ────────
+    if not skip_views:
+        _create_fantasy_tables(conn)
 
     conn.close()
     print("\n" + "=" * 60)

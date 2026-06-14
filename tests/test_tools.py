@@ -8,6 +8,8 @@ from nfl_mcp.tools import (
     nfl_player_stats, nfl_compare, nfl_query,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
     nfl_fantasy_opportunity, nfl_fantasy_rankings, nfl_ftn_charting,
+    nfl_td_luck, nfl_role_trend, nfl_separation_opportunity,
+    nfl_drop_rate, nfl_contract_value, nfl_injury_return,
 )
 
 
@@ -489,6 +491,205 @@ class TestNflFtnCharting:
         result = nfl_ftn_charting(team="KC", season=1999)
         assert result["total_plays"] == 0
         assert result["charting"] == {}
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflTdLuck:
+    def test_no_filters_returns_results(self):
+        result = nfl_td_luck(season=2024)
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_default_sorted_most_unlucky_first(self):
+        result = nfl_td_luck(season=2024, limit=5)
+        scores = [r["total_td_luck_score"] for r in result["td_luck"]]
+        assert scores == sorted(scores)
+
+    def test_filter_by_player(self):
+        result = nfl_td_luck(player="Jefferson", season=2024)
+        assert "error" not in result
+
+    def test_filter_by_team_and_position(self):
+        result = nfl_td_luck(team="KC", position="TE", season=2024)
+        assert "error" not in result
+
+    def test_rows_have_expected_fields(self):
+        result = nfl_td_luck(season=2024, limit=1)
+        row = result["td_luck"][0]
+        for field in ("full_name", "team", "season", "rec_td_luck", "rush_td_luck", "total_td_luck_score"):
+            assert field in row
+
+    def test_invalid_limit_falls_back(self):
+        result = nfl_td_luck(season=2024, limit="oops")
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_td_luck(season=2024)
+        assert "boom" in result["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflRoleTrend:
+    def test_filter_by_season_and_week(self):
+        result = nfl_role_trend(season=2024, week=8)
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_default_sorted_by_snap_delta_desc(self):
+        result = nfl_role_trend(season=2024, week=8, limit=5)
+        deltas = [r["snap_pct_delta"] for r in result["role_trend"] if r["snap_pct_delta"] is not None]
+        assert deltas == sorted(deltas, reverse=True)
+
+    def test_min_snap_pct_filter(self):
+        result = nfl_role_trend(season=2024, week=8, min_snap_pct=50)
+        for r in result["role_trend"]:
+            assert r["snap_pct"] >= 50
+
+    def test_filter_by_player_team_position(self):
+        result = nfl_role_trend(player="Kelce", team="KC", position="TE", season=2024)
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_role_trend(season=2024)
+        assert "boom" in result["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflSeparationOpportunity:
+    def test_no_filters_returns_results(self):
+        result = nfl_separation_opportunity()
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_regression_candidate_filter(self):
+        result = nfl_separation_opportunity(regression_candidate=True)
+        for r in result["separation_opportunity"]:
+            assert r["regression_candidate"] is True
+
+    def test_pre_2016_season_guarded(self):
+        result = nfl_separation_opportunity(season=2015)
+        assert "error" in result
+        assert "2016" in result["error"]
+
+    def test_filter_by_player_team_position(self):
+        result = nfl_separation_opportunity(player="Jefferson", team="MIN", position="WR", season=2024)
+        assert "error" not in result
+
+    def test_invalid_limit_falls_back(self):
+        result = nfl_separation_opportunity(limit="oops")
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_separation_opportunity(season=2024)
+        assert "boom" in result["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflDropRate:
+    def test_filter_by_season(self):
+        result = nfl_drop_rate(season=2024)
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_default_sorted_highest_drop_rate_first(self):
+        result = nfl_drop_rate(season=2024, min_targets=30, limit=5)
+        rates = [r["drop_rate_pct"] for r in result["drop_rate"] if r["drop_rate_pct"] is not None]
+        assert rates == sorted(rates, reverse=True)
+
+    def test_pre_2022_season_guarded(self):
+        result = nfl_drop_rate(season=2021)
+        assert "error" in result
+        assert "2022" in result["error"]
+
+    def test_min_targets_filter(self):
+        result = nfl_drop_rate(season=2024, min_targets=40)
+        for r in result["drop_rate"]:
+            assert r["catchable_targets"] >= 40
+
+    def test_filter_by_player_and_team(self):
+        result = nfl_drop_rate(player="Pollard", team="TEN", season=2024)
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_drop_rate(season=2024)
+        assert "boom" in result["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflContractValue:
+    def test_no_filters_returns_results(self):
+        result = nfl_contract_value(season=2024)
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_default_sorted_best_value_first(self):
+        result = nfl_contract_value(season=2024, min_apy=2, limit=5)
+        vals = [r["fp_per_million"] for r in result["contract_value"] if r["fp_per_million"] is not None]
+        assert vals == sorted(vals, reverse=True)
+
+    def test_apy_range_filter(self):
+        result = nfl_contract_value(season=2024, min_apy=5, max_apy=10)
+        for r in result["contract_value"]:
+            assert 5 <= r["apy"] <= 10
+
+    def test_filter_by_player_team_position(self):
+        result = nfl_contract_value(player="Gibbs", team="DET", position="RB", season=2024)
+        assert "error" not in result
+
+    def test_invalid_limit_falls_back(self):
+        result = nfl_contract_value(season=2024, limit="oops")
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_contract_value(season=2024)
+        assert "boom" in result["error"]
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("require_db")
+class TestNflInjuryReturn:
+    def test_filter_by_injury_type(self):
+        result = nfl_injury_return(injury_type="hamstring")
+        assert "error" not in result
+        assert result["count"] > 0
+
+    def test_default_sorted_by_week_post_return(self):
+        result = nfl_injury_return(injury_type="hamstring", position="WR")
+        weeks = [r["week_post_return"] for r in result["injury_return"]]
+        assert weeks == sorted(weeks)
+
+    def test_filter_by_position_and_week(self):
+        result = nfl_injury_return(injury_type="knee", position="RB", week_post_return=1)
+        assert "error" not in result
+        for r in result["injury_return"]:
+            assert r["week_post_return"] == 1
+
+    def test_rows_have_expected_fields(self):
+        result = nfl_injury_return(injury_type="ankle", limit=1)
+        if result["count"] > 0:
+            row = result["injury_return"][0]
+            for field in ("injury_type", "position", "week_post_return",
+                          "avg_snap_pct_recovery", "median_snap_pct_recovery", "sample_size"):
+                assert field in row
+
+    def test_invalid_limit_falls_back(self):
+        result = nfl_injury_return(injury_type="hamstring", limit="oops")
+        assert "error" not in result
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_injury_return(injury_type="hamstring")
+        assert "boom" in result["error"]
 
 
 class TestInputValidation:

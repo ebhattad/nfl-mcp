@@ -643,3 +643,151 @@ def test_ftn_charting_returns_error_on_db_error(monkeypatch):
     monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(duckdb.Error("ftn boom")))
     result = tools.nfl_ftn_charting(team="KC")
     assert result["error"] == "ftn boom"
+
+
+# ── Fantasy derived-table tools ────────────────────────────────────────────────
+
+def _capture_execute(monkeypatch, rows):
+    captured = {}
+
+    def fake_execute(sql, params=None):
+        captured["sql"] = sql
+        captured["params"] = params
+        return rows
+
+    monkeypatch.setattr(tools, "_execute", fake_execute)
+    return captured
+
+
+def test_td_luck_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"full_name": "X"}])
+    result = tools.nfl_td_luck(player="Jefferson", position="wr", team="min", season=2024, limit=10)
+    assert result["count"] == 1
+    assert "full_name ILIKE ?" in captured["sql"]
+    assert "position ILIKE ?" in captured["sql"]
+    assert "team = ?" in captured["sql"]
+    assert "total_td_luck_score ASC" in captured["sql"]
+    assert captured["params"] == ["%Jefferson%", "WR", "MIN", 2024]
+
+
+def test_td_luck_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_td_luck(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+    assert captured["params"] is None
+
+
+def test_td_luck_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("td timeout")))
+    assert tools.nfl_td_luck()["error"] == "td timeout"
+
+
+def test_role_trend_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"full_name": "X"}])
+    tools.nfl_role_trend(player="Kelce", position="te", team="kc", season=2024, week=8, min_snap_pct=50)
+    assert "full_name ILIKE ?" in captured["sql"]
+    assert "snap_pct >= ?" in captured["sql"]
+    assert "snap_pct_delta DESC" in captured["sql"]
+    assert captured["params"] == ["%Kelce%", "TE", "KC", 2024, 8, 50.0]
+
+
+def test_role_trend_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_role_trend(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+
+
+def test_role_trend_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("role timeout")))
+    assert tools.nfl_role_trend()["error"] == "role timeout"
+
+
+def test_separation_opportunity_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"full_name": "X"}])
+    tools.nfl_separation_opportunity(player="Aiyuk", position="wr", team="sf", season=2024, regression_candidate=True)
+    assert "regression_candidate = ?" in captured["sql"]
+    assert "fp_diff_per_game ASC" in captured["sql"]
+    assert captured["params"] == ["%Aiyuk%", "WR", "SF", 2024, True]
+
+
+def test_separation_opportunity_guards_pre_2016():
+    result = tools.nfl_separation_opportunity(season=2015)
+    assert "2016" in result["error"]
+
+
+def test_separation_opportunity_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_separation_opportunity(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+
+
+def test_separation_opportunity_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("sep timeout")))
+    assert tools.nfl_separation_opportunity()["error"] == "sep timeout"
+
+
+def test_drop_rate_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"player": "T.Pollard"}])
+    tools.nfl_drop_rate(player="Pollard", team="ten", season=2024, min_targets=30)
+    assert "player ILIKE ?" in captured["sql"]
+    assert "catchable_targets >= ?" in captured["sql"]
+    assert "drop_rate_pct DESC" in captured["sql"]
+    assert captured["params"] == ["%Pollard%", "TEN", 2024, 30]
+
+
+def test_drop_rate_guards_pre_2022():
+    result = tools.nfl_drop_rate(season=2021)
+    assert "2022" in result["error"]
+
+
+def test_drop_rate_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_drop_rate(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+
+
+def test_drop_rate_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("drop timeout")))
+    assert tools.nfl_drop_rate()["error"] == "drop timeout"
+
+
+def test_contract_value_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"full_name": "X"}])
+    tools.nfl_contract_value(player="Gibbs", position="rb", team="det", season=2024, min_apy=2, max_apy=10)
+    assert "apy >= ?" in captured["sql"]
+    assert "apy <= ?" in captured["sql"]
+    assert "fp_per_million DESC" in captured["sql"]
+    assert captured["params"] == ["%Gibbs%", "RB", "DET", 2024, 2.0, 10.0]
+
+
+def test_contract_value_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_contract_value(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+
+
+def test_contract_value_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("contract timeout")))
+    assert tools.nfl_contract_value()["error"] == "contract timeout"
+
+
+def test_injury_return_builds_filters(monkeypatch):
+    captured = _capture_execute(monkeypatch, [{"injury_type": "hamstring"}])
+    tools.nfl_injury_return(injury_type="hamstring", position="wr", week_post_return=2)
+    assert "injury_type ILIKE ?" in captured["sql"]
+    assert "position = ?" in captured["sql"]
+    assert "week_post_return = ?" in captured["sql"]
+    assert "week_post_return ASC" in captured["sql"]
+    assert captured["params"] == ["%hamstring%", "WR", 2]
+
+
+def test_injury_return_invalid_limit_falls_back(monkeypatch):
+    captured = _capture_execute(monkeypatch, [])
+    tools.nfl_injury_return(limit="oops")
+    assert "LIMIT 50" in captured["sql"]
+    assert captured["params"] is None
+
+
+def test_injury_return_returns_error_on_timeout(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("injury timeout")))
+    assert tools.nfl_injury_return()["error"] == "injury timeout"

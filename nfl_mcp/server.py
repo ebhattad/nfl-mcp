@@ -20,6 +20,8 @@ from .tools import (
     nfl_team_stats, nfl_player_stats, nfl_compare,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
     nfl_fantasy_opportunity, nfl_fantasy_rankings, nfl_ftn_charting,
+    nfl_td_luck, nfl_role_trend, nfl_separation_opportunity,
+    nfl_drop_rate, nfl_contract_value, nfl_injury_return,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -557,10 +559,147 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="nfl_td_luck",
+        description=(
+            "PREFERRED for touchdown luck / TD regression questions. Returns actual vs "
+            "expected receiving and rushing touchdowns per player-season. Negative "
+            "total_td_luck_score = scored fewer TDs than expected (positive-regression / "
+            "'unlucky' bounce-back candidate); positive = over-performed (sell-high). Use "
+            "for 'who was unlucky on TDs in 2024' or 'is player X due for TD regression'. "
+            "Default sort is most unlucky first."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {"type": "string", "description": "Player full name (partial match)."},
+                "position": {"type": "string", "description": "Position filter (e.g. WR, RB, TE)."},
+                "team": {"type": "string", "description": "Team abbreviation (e.g. KC)."},
+                "season": {"type": "integer", "description": "Exact season year."},
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
+    Tool(
+        name="nfl_role_trend",
+        description=(
+            "PREFERRED for usage-trend / breakout / fade questions. Returns weekly snap %, "
+            "target share, carry share, and air-yards share with a trailing 3-week average "
+            "and the current-week delta vs that average. Use for 'whose role is trending up' "
+            "or 'is player X's snap share rising'. Default sort is biggest snap-share gain "
+            "first (snap_pct_delta DESC)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {"type": "string", "description": "Player full name (partial match)."},
+                "position": {"type": "string", "description": "Position filter (e.g. WR, RB)."},
+                "team": {"type": "string", "description": "Team abbreviation."},
+                "season": {"type": "integer", "description": "Exact season year."},
+                "week": {"type": "integer", "description": "Week number."},
+                "min_snap_pct": {"type": "number", "description": "Minimum snap % (0–100) for the week."},
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
+    Tool(
+        name="nfl_separation_opportunity",
+        description=(
+            "PREFERRED for receiver regression / 'getting open but not producing' questions "
+            "(2016–present). Joins Next Gen Stats separation and YAC-above-expected to fantasy "
+            "opportunity per player-season. regression_candidate=true flags receivers creating "
+            "separation (>2.5 yds) who under-produced (fp_diff_per_game < -1.5, td_luck < -1.0). "
+            "Default sort is most under-producing first (fp_diff_per_game ASC)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {"type": "string", "description": "Player full name (partial match)."},
+                "position": {"type": "string", "description": "Position filter (e.g. WR, TE)."},
+                "team": {"type": "string", "description": "Team abbreviation."},
+                "season": {"type": "integer", "description": "Exact season year (2016+)."},
+                "regression_candidate": {
+                    "type": "boolean",
+                    "description": "If true, only return flagged positive-regression candidates.",
+                },
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
+    Tool(
+        name="nfl_drop_rate",
+        description=(
+            "PREFERRED for drops / catchable-target reliability questions (2022–present). "
+            "Returns share of catchable targets dropped per receiver-season from FTN charting, "
+            "plus contested targets and created receptions. Use for 'who drops the most passes' "
+            "or 'what is player X's drop rate'. Player names are short form ('J.Jefferson'). "
+            "Default sort is highest drop rate first."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {"type": "string", "description": "Player name (partial match, short form)."},
+                "team": {"type": "string", "description": "Team abbreviation."},
+                "season": {"type": "integer", "description": "Exact season year (2022+)."},
+                "min_targets": {"type": "integer", "description": "Minimum catchable targets to qualify."},
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
+    Tool(
+        name="nfl_contract_value",
+        description=(
+            "PREFERRED for contract value / cost-efficiency questions. Returns fantasy points "
+            "per $M of average per year (APY) using each player's active contract joined to "
+            "seasonal fantasy production. Use for 'best fantasy value per dollar' or 'is player "
+            "X worth his contract'. apy and cap_pct reflect the current active contract. Default "
+            "sort is best value first (fp_per_million DESC)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {"type": "string", "description": "Player full name (partial match)."},
+                "position": {"type": "string", "description": "Position filter (e.g. RB, WR)."},
+                "team": {"type": "string", "description": "Team abbreviation."},
+                "season": {"type": "integer", "description": "Exact season year."},
+                "min_apy": {"type": "number", "description": "Minimum APY in $millions."},
+                "max_apy": {"type": "number", "description": "Maximum APY in $millions."},
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
+    Tool(
+        name="nfl_injury_return",
+        description=(
+            "PREFERRED for injury recovery / return-to-form questions. Returns post-return "
+            "snap-share recovery as a percent of pre-injury baseline at +1..+8 weeks after an "
+            "'Out' spell, bucketed by normalized injury type (hamstring, knee, ankle, …) and "
+            "position. 100 = fully back to baseline usage. Use for 'how long until players "
+            "recover snaps after a hamstring injury'. Default sort is by weeks since return."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "injury_type": {
+                    "type": "string",
+                    "description": (
+                        "Normalized injury bucket (partial match). Valid buckets: hamstring, "
+                        "knee, ankle, shoulder, concussion, groin, foot, calf, hip, back, "
+                        "quadriceps, achilles, wrist, hand, elbow, toe, thigh, neck, ribs, "
+                        "pectoral, other. Specific diagnoses are mapped to these buckets "
+                        "(e.g. 'ACL' -> knee, 'hammy' -> hamstring); anything unmatched -> other."
+                    ),
+                },
+                "position": {"type": "string", "description": "Position filter (e.g. WR, RB)."},
+                "week_post_return": {
+                    "type": "integer",
+                    "description": "Specific week offset after return (1–8).",
+                },
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
+            },
+        },
+    ),
 ]
-
-
-@_mcp_server.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOLS
 
@@ -585,6 +724,12 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         "nfl_fantasy_opportunity":  nfl_fantasy_opportunity,
         "nfl_fantasy_rankings":     nfl_fantasy_rankings,
         "nfl_ftn_charting":         nfl_ftn_charting,
+        "nfl_td_luck":              nfl_td_luck,
+        "nfl_role_trend":           nfl_role_trend,
+        "nfl_separation_opportunity": nfl_separation_opportunity,
+        "nfl_drop_rate":            nfl_drop_rate,
+        "nfl_contract_value":       nfl_contract_value,
+        "nfl_injury_return":        nfl_injury_return,
     }
 
     try:

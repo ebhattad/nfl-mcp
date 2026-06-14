@@ -34,11 +34,6 @@ class TestRegistryStructure:
     def test_default_datasets_not_empty(self):
         assert len(DEFAULT_DATASETS) > 0
 
-    def test_all_wave_values_are_valid(self):
-        for d in REGISTRY.values():
-            assert d.wave in (1, 2, 3), \
-                f"{d.dataset_id} has invalid wave={d.wave}"
-
     def test_all_entries_are_datasetdef(self):
         for d in REGISTRY.values():
             assert isinstance(d, DatasetDef)

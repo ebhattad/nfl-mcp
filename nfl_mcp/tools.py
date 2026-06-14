@@ -939,9 +939,338 @@ def nfl_ftn_charting(
     }
 
 
+def nfl_td_luck(
+    player: str | None = None,
+    position: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Touchdown luck — actual vs expected TDs per player-season from the
+    player_td_luck table. Negative total_td_luck_score = scored fewer TDs than
+    expected (positive-regression / "unlucky" candidate); positive = over-performed.
+    Default sort is most unlucky first (total_td_luck_score ASC).
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    conditions, params = [], []
+    if player:
+        conditions.append("full_name ILIKE ?")
+        params.append(f"%{player}%")
+    if position:
+        conditions.append("position ILIKE ?")
+        params.append(position.upper())
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT player_id, full_name, position, team, season,
+               rec_td, rec_td_exp, rec_td_luck,
+               rush_td, rush_td_exp, rush_td_luck,
+               total_td_luck_score
+        FROM player_td_luck
+        WHERE {where}
+        ORDER BY total_td_luck_score ASC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"td_luck": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_role_trend(
+    player: str | None = None,
+    position: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    week: int | None = None,
+    min_snap_pct: float | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Rolling 3-week role trend — weekly snap %, target/carry/air-yards share with a
+    trailing 3-week average and the current-week delta vs that average (from
+    player_role_trend). Surfaces players whose usage is rising or fading. Default
+    sort is biggest snap-share gain first (snap_pct_delta DESC).
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    conditions, params = [], []
+    if player:
+        conditions.append("full_name ILIKE ?")
+        params.append(f"%{player}%")
+    if position:
+        conditions.append("position ILIKE ?")
+        params.append(position.upper())
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+    if week:
+        conditions.append("week = ?")
+        params.append(int(week))
+    if min_snap_pct is not None:
+        conditions.append("snap_pct >= ?")
+        params.append(float(min_snap_pct))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT player_id, full_name, position, team, season, week,
+               snap_pct, target_share_pct, carry_share_pct, air_yards_share_pct,
+               snap_pct_3wk, target_share_pct_3wk, carry_share_pct_3wk, air_yards_share_pct_3wk,
+               snap_pct_delta, target_share_pct_delta, carry_share_pct_delta, air_yards_share_pct_delta
+        FROM player_role_trend
+        WHERE {where}
+        ORDER BY snap_pct_delta DESC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"role_trend": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_separation_opportunity(
+    player: str | None = None,
+    position: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    regression_candidate: bool | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Separation-adjusted opportunity — joins Next Gen Stats receiving separation/YAC
+    to fantasy opportunity per player-season (from player_separation_opportunity).
+    Flags receivers getting open (avg_separation > 2.5) who under-produced
+    (fp_diff_per_game < -1.5 and td_luck < -1.0) as regression_candidate. Next Gen
+    Stats only goes back to 2016. Default sort is most under-producing first
+    (fp_diff_per_game ASC).
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    if season is not None and int(season) < 2016:
+        return {"error": "Next Gen Stats receiving data is only available from 2016 onward"}
+
+    conditions, params = [], []
+    if player:
+        conditions.append("full_name ILIKE ?")
+        params.append(f"%{player}%")
+    if position:
+        conditions.append("position ILIKE ?")
+        params.append(position.upper())
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+    if regression_candidate is not None:
+        conditions.append("regression_candidate = ?")
+        params.append(bool(regression_candidate))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT player_id, full_name, position, team, season, games,
+               fp_diff, fp_diff_per_game, td_luck, catch_luck,
+               target_share_pct, air_yards_share_pct,
+               avg_separation, avg_yac_above_expectation, catch_percentage,
+               regression_candidate
+        FROM player_separation_opportunity
+        WHERE {where}
+        ORDER BY fp_diff_per_game ASC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"separation_opportunity": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_drop_rate(
+    player: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    min_targets: int | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Drop rate — share of catchable targets dropped per receiver-season from FTN
+    charting (2022+) joined to plays (player_drop_rate). Also reports contested
+    targets and created receptions. Player names are nflverse short form
+    ('J.Jefferson'). Default sort is highest drop rate first (drop_rate_pct DESC).
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    if season is not None and int(season) < 2022:
+        return {"error": "FTN charting (drop) data is only available from 2022 onward"}
+
+    conditions, params = [], []
+    if player:
+        conditions.append("player ILIKE ?")
+        params.append(f"%{player}%")
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+    if min_targets is not None:
+        conditions.append("catchable_targets >= ?")
+        params.append(int(min_targets))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT player_id, player, team, season,
+               catchable_targets, drops, drop_rate_pct,
+               contested_targets, created_receptions
+        FROM player_drop_rate
+        WHERE {where}
+        ORDER BY drop_rate_pct DESC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"drop_rate": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_contract_value(
+    player: str | None = None,
+    position: str | None = None,
+    team: str | None = None,
+    season: int | None = None,
+    min_apy: float | None = None,
+    max_apy: float | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Contract value efficiency — fantasy points per $M of average per year (APY),
+    using each player's active contract joined to seasonal fantasy production
+    (player_contract_value). apy and cap_pct reflect the current active contract.
+    Default sort is best value first (fp_per_million DESC).
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    conditions, params = [], []
+    if player:
+        conditions.append("full_name ILIKE ?")
+        params.append(f"%{player}%")
+    if position:
+        conditions.append("position ILIKE ?")
+        params.append(position.upper())
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if season:
+        conditions.append("season = ?")
+        params.append(int(season))
+    if min_apy is not None:
+        conditions.append("apy >= ?")
+        params.append(float(min_apy))
+    if max_apy is not None:
+        conditions.append("apy <= ?")
+        params.append(float(max_apy))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT player_id, full_name, position, team, season,
+               apy, cap_pct, total_fp, total_fp_exp, fp_per_million
+        FROM player_contract_value
+        WHERE {where}
+        ORDER BY fp_per_million DESC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"contract_value": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_injury_return(
+    injury_type: str | None = None,
+    position: str | None = None,
+    week_post_return: int | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Injury return curve — post-return snap-share recovery, expressed as a percent of
+    each player's pre-injury baseline, at +1..+8 weeks after returning from an 'Out'
+    spell, bucketed by normalized injury type and position (injury_return_curve).
+    100 means fully back to baseline usage. Default sort is by weeks since return
+    (week_post_return ASC). sample_size shows how many player-spells back each point.
+    """
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    conditions, params = [], []
+    if injury_type:
+        conditions.append("injury_type ILIKE ?")
+        params.append(f"%{injury_type}%")
+    if position:
+        conditions.append("position = ?")
+        params.append(position.upper())
+    if week_post_return is not None:
+        conditions.append("week_post_return = ?")
+        params.append(int(week_post_return))
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT injury_type, position, week_post_return,
+               avg_snap_pct_recovery, median_snap_pct_recovery, sample_size
+        FROM injury_return_curve
+        WHERE {where}
+        ORDER BY week_post_return ASC, injury_type, position
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"injury_return": rows, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
 __all__ = [
     "nfl_schema", "nfl_status", "nfl_query",
     "nfl_search_plays", "nfl_team_stats", "nfl_player_stats", "nfl_compare",
     "nfl_catalog", "nfl_roster", "nfl_injuries", "nfl_schedule", "nfl_snap_counts",
     "nfl_fantasy_opportunity", "nfl_fantasy_rankings", "nfl_ftn_charting",
+    "nfl_td_luck", "nfl_role_trend", "nfl_separation_opportunity",
+    "nfl_drop_rate", "nfl_contract_value", "nfl_injury_return",
 ]

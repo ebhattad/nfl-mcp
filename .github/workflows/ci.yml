@@ -30,7 +30,10 @@ jobs:
         run: nfl-mcp ingest --dataset all --start 2024 --end 2024
 
       - name: Run tests with coverage
-        run: pytest -q
+        # --cov-fail-under=100 gates the build on no coverage regression.
+        # Kept on the CI command (not pyproject addopts) so local unit-only
+        # runs (`pytest -m unit`) are not held to the full-suite floor.
+        run: pytest -q --cov-fail-under=100
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7

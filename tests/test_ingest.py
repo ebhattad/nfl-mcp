@@ -13,6 +13,7 @@ from nfl_mcp.ingest import (
     _apply_duckdb_pragmas,
     _build_enhanced_description,
     _create_aggregate_tables,
+    _create_fantasy_tables,
     _create_indexes,
     _create_plays_table,
     _duckdb_type_for_polars,
@@ -426,7 +427,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,
@@ -444,7 +444,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _record_loaded(conn, "fake_static", "fake_static", "load_fake_static", 1)
         called = []
@@ -463,7 +462,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,
@@ -481,7 +479,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_seasonal",
             seasonal=True,
             default=False,
-            wave=1,
             min_season=2020,
             max_season=2024,
         )
@@ -515,7 +512,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_seasonal",
             seasonal=True,
             default=False,
-            wave=1,
         )
         conn.execute("CREATE TABLE fake_seasonal (season BIGINT, value BIGINT)")
         conn.execute("INSERT INTO fake_seasonal VALUES (2024, 1), (2024, 2), (2023, 9)")
@@ -538,7 +534,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_missing_table",
             seasonal=True,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,
@@ -599,6 +594,51 @@ class TestAggregateAndIndexBuilders:
         ).fetchone()[0]
         assert idx > 0
 
+    def test_create_fantasy_tables_builds_present_and_skips_missing(self, conn):
+        # Only ff_opportunity present → player_td_luck builds; the rest skip gracefully.
+        ff = pl.DataFrame({
+            "player_id": ["00-1", "00-1", "00-2"],
+            "full_name": ["A Back", "A Back", "B Wr"],
+            "position": ["RB", "RB", "WR"],
+            "posteam": ["KC", "KC", "BAL"],
+            "season": ["2024", "2024", "2024"],
+            "week": [1.0, 2.0, 1.0],
+            "rec_touchdown": [1.0, 0.0, 2.0],
+            "rec_touchdown_exp": [1.5, 0.5, 1.0],
+            "rec_touchdown_diff": [-0.5, -0.5, 1.0],
+            "rush_touchdown": [1.0, 1.0, 0.0],
+            "rush_touchdown_exp": [0.5, 2.0, 0.0],
+            "rush_touchdown_diff": [0.5, -1.0, 0.0],
+        })
+        _write_df_to_table(conn, "ff_opportunity", ff, replace=True)
+
+        _create_fantasy_tables(conn)
+
+        created = {r[0] for r in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='main'"
+        ).fetchall()}
+        assert "player_td_luck" in created
+        # Sources for these are absent, so they must be skipped (not created).
+        assert "player_role_trend" not in created
+        assert "player_drop_rate" not in created
+
+        # The built table is recorded in metadata as a derived dataset.
+        meta = conn.execute(
+            "SELECT loader_fn, season FROM _ingest_metadata WHERE dataset_id = 'player_td_luck'"
+        ).fetchone()
+        assert meta == ("derived", None)
+
+        # One row per player-season; total_td_luck_score aggregates rec+rush diff.
+        row = conn.execute(
+            "SELECT total_td_luck_score FROM player_td_luck WHERE player_id = '00-1'"
+        ).fetchone()
+        assert row[0] == -1.5
+
+    def test_table_exists_reports_presence(self, conn):
+        from nfl_mcp.ingest import _table_exists
+        assert _table_exists(conn, "_ingest_metadata") is True
+        assert _table_exists(conn, "does_not_exist") is False
+
 
 # ── run_ingest_datasets orchestration ──────────────────────────────────────────
 
@@ -647,6 +687,10 @@ class TestRunIngestOrchestration:
             lambda c: calls.__setitem__("agg", calls["agg"] + 1),
         )
         monkeypatch.setattr(
+            "nfl_mcp.ingest._create_fantasy_tables",
+            lambda c: calls.__setitem__("fantasy", calls.get("fantasy", 0) + 1),
+        )
+        monkeypatch.setattr(
             "nfl_mcp.ingest._ingest_generic_dataset",
             lambda c, defn, seasons, fresh=False: calls["other"].append((defn.dataset_id, seasons, fresh)) or 5,
         )
@@ -664,6 +708,7 @@ class TestRunIngestOrchestration:
         assert calls["record"] == [("pbp", "plays", "load_pbp", 11, 2024)]
         assert calls["idx"] == 1
         assert calls["agg"] == 1
+        assert calls.get("fantasy") == 1
         assert calls["other"] and calls["other"][0][0] == "schedules"
         assert conn.closed is True
 
@@ -707,6 +752,7 @@ class TestRunIngestOrchestration:
             "nfl_mcp.ingest._ingest_generic_dataset",
             lambda c, defn, seasons, fresh=False: generic_calls.append(defn.dataset_id) or 1,
         )
+        monkeypatch.setattr("nfl_mcp.ingest._create_fantasy_tables", lambda c: None)
 
         run_ingest_datasets(
             dataset_ids=["schedules"],
