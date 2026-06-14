@@ -427,7 +427,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,
@@ -445,7 +444,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _record_loaded(conn, "fake_static", "fake_static", "load_fake_static", 1)
         called = []
@@ -464,7 +462,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_static",
             seasonal=False,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,
@@ -482,7 +479,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_seasonal",
             seasonal=True,
             default=False,
-            wave=1,
             min_season=2020,
             max_season=2024,
         )
@@ -516,7 +512,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_seasonal",
             seasonal=True,
             default=False,
-            wave=1,
         )
         conn.execute("CREATE TABLE fake_seasonal (season BIGINT, value BIGINT)")
         conn.execute("INSERT INTO fake_seasonal VALUES (2024, 1), (2024, 2), (2023, 9)")
@@ -539,7 +534,6 @@ class TestGenericDatasetIngestion:
             table_name="fake_missing_table",
             seasonal=True,
             default=False,
-            wave=1,
         )
         _install_fake_nflreadpy(
             monkeypatch,

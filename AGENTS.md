@@ -100,7 +100,6 @@ Each entry in `REGISTRY` is a `DatasetDef` with:
 - `seasonal`: whether it accepts a `seasons=` parameter
 - `storage`: `"replace"` (static data) or `"append_by_season"` (time-series)
 - `min_season`/`max_season`: clip the ingest range to avoid known 404s
-- `wave`: 1 (default), 2, or 3 (opt-in heavy datasets)
 - `default`: whether included in `nfl-mcp ingest` with no flags
 
 ## Ingest Idempotency
