@@ -73,6 +73,7 @@ pip install --force-reinstall /Users/eshaanbhattad/Desktop/nfl-mcp/
 - **Integration tests** (`test_tools.py` classes marked `@pytest.mark.integration`): require a loaded DuckDB; skipped automatically via `require_db` fixture if DB is absent
 - **Safety tests** (`test_safety.py`): SQL injection guardrails, no DB needed
 - CI runs `nfl-mcp ingest --dataset all --start 2024 --end 2024` before tests to populate the DB
+- **CI enforces 100% coverage** via `pytest -q --cov-fail-under=100` on the full suite. The floor lives on the CI command (not `pyproject.toml` addopts) so local unit-only runs (`pytest -m unit`, ~99.7%) aren't held to the full-suite floor. New code must keep total coverage at 100% or CI fails.
 
 When writing new tool tests, follow the existing pattern:
 ```python
