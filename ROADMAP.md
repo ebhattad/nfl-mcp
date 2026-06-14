@@ -6,11 +6,12 @@
 ## Current State (as of June 2026)
 - **Transport**: Streamable HTTP (replaced stdio). Server runs as a persistent process via `nfl-mcp serve`. `init` wizard offers to start the server.
 - **Multi-dataset ingestion**: Declarative registry in `registry.py` covering 33 tables across 3 waves. Generic ingest loop in `ingest.py` with idempotency, schema reconciliation, and `_ingest_metadata` tracking. **All 29 registry datasets are now ingested by default** — the full nflverse family is baked into the served image so clients always have whatever data they need.
-- **MCP tools**: 15 structured tools — `nfl_search_plays`, `nfl_team_stats`, `nfl_player_stats`, `nfl_compare`, `nfl_schedule`, `nfl_roster`, `nfl_injuries`, `nfl_snap_counts`, `nfl_fantasy_opportunity`, `nfl_fantasy_rankings`, `nfl_ftn_charting`, `nfl_schema`, `nfl_status`, `nfl_catalog`, `nfl_query` (last resort).
+- **MCP tools**: 21 structured tools — `nfl_search_plays`, `nfl_team_stats`, `nfl_player_stats`, `nfl_compare`, `nfl_schedule`, `nfl_roster`, `nfl_injuries`, `nfl_snap_counts`, `nfl_fantasy_opportunity`, `nfl_fantasy_rankings`, `nfl_ftn_charting`, `nfl_td_luck`, `nfl_role_trend`, `nfl_separation_opportunity`, `nfl_drop_rate`, `nfl_contract_value`, `nfl_injury_return`, `nfl_schema`, `nfl_status`, `nfl_catalog`, `nfl_query` (last resort).
 - **CLI**: `serve` (uvicorn, `--host`/`--port`), `ingest` (`--dataset`/`--start`/`--end`/`--fresh`), `init`, `setup-client`, `doctor`.
 - **Spread/betting data**: `spread_line` and `total_line` are already columns in the `plays` PBP table. Accessible today via `nfl_search_plays` or `nfl_query`.
-- **Fantasy & charting data**: `ff_opportunity` (→ `nfl_fantasy_opportunity`), `ff_rankings_draft`/`ff_rankings_week` (→ `nfl_fantasy_rankings`), and `ftn_charting` (→ `nfl_ftn_charting`) all have dedicated tools and are ingested by default. Datasets without a dedicated tool yet (e.g. `ff_playerids`, `contracts`) remain queryable via `nfl_query`.
-- **Testing**: 359 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
+- **Fantasy & charting data**: `ff_opportunity` (→ `nfl_fantasy_opportunity`), `ff_rankings_draft`/`ff_rankings_week` (→ `nfl_fantasy_rankings`), and `ftn_charting` (→ `nfl_ftn_charting`) all have dedicated tools and are ingested by default. Datasets without a dedicated tool yet (e.g. `ff_playerids`) remain queryable via `nfl_query`.
+- **Fantasy derived tables**: six analytics tables are built at ingest time from already-loaded sources (no query-time compute) and exposed via dedicated tools — `player_td_luck` (→ `nfl_td_luck`), `player_role_trend` (→ `nfl_role_trend`), `player_separation_opportunity` (→ `nfl_separation_opportunity`), `player_drop_rate` (→ `nfl_drop_rate`), `player_contract_value` (→ `nfl_contract_value`), `injury_return_curve` (→ `nfl_injury_return`). All are recorded in `_ingest_metadata` so they surface in `nfl_catalog`/`nfl_status`.
+- **Testing**: 417 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
 - **CI**: `ci.yml` runs the test suite on a single-season ingest. `docker-build.yml` validates the container image on PRs touching Docker-relevant paths — a lightweight single-season bake (via the `INGEST_ARGS` build arg) plus a boot/`/mcp` smoke test, build-only (no push). The full nflverse bake + publish still runs on release/schedule via `docker.yml`.
 - **Eval harness**: Private, lives at `~/nfl-mcp-evals/`. 29 cases, 29/29 passing on gpt-5.4 with prompt caching (~$0.035/run, 94% cache hit).
 
@@ -64,6 +65,13 @@ Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~
   - ✅ `nfl_fantasy_opportunity` — target/air-yards/carry share (ff_opportunity)
   - ✅ `nfl_fantasy_rankings` — expert consensus rankings, draft + weekly (ff_rankings_draft / ff_rankings_week)
   - ✅ `nfl_ftn_charting` — aggregated charting tendencies: play-action, RPO, screen, motion, box/blitz (ftn_charting)
+- Fantasy analytics derived tables (built at ingest time, exposed via dedicated tools):
+  - ✅ `nfl_td_luck` — actual vs expected TDs, regression candidates (player_td_luck ← ff_opportunity)
+  - ✅ `nfl_role_trend` — rolling 3-week snap/target/carry/air-yards share + delta (player_role_trend ← ff_opportunity + snap_counts)
+  - ✅ `nfl_separation_opportunity` — Next Gen separation vs production, regression flag, 2016+ (player_separation_opportunity ← ff_opportunity + nextgen_stats_receiving)
+  - ✅ `nfl_drop_rate` — catchable-target drop rate, 2022+ (player_drop_rate ← ftn_charting + plays)
+  - ✅ `nfl_contract_value` — fantasy points per $M APY (player_contract_value ← contracts + ff_opportunity)
+  - ✅ `nfl_injury_return` — post-return snap-share recovery by injury type/position (injury_return_curve ← injuries + snap_counts)
 - Spread/betting data is already queryable via `plays` table (`spread_line`, `total_line`) — consider a `nfl_betting_lines` convenience tool surfacing game-level spread/total without raw SQL.
 
 ## Technical Notes / Design Choices
