@@ -682,7 +682,13 @@ TOOLS = [
             "properties": {
                 "injury_type": {
                     "type": "string",
-                    "description": "Normalized injury bucket (partial match): hamstring, knee, ankle, etc.",
+                    "description": (
+                        "Normalized injury bucket (partial match). Valid buckets: hamstring, "
+                        "knee, ankle, shoulder, concussion, groin, foot, calf, hip, back, "
+                        "quadriceps, achilles, wrist, hand, elbow, toe, thigh, neck, ribs, "
+                        "pectoral, other. Specific diagnoses are mapped to these buckets "
+                        "(e.g. 'ACL' -> knee, 'hammy' -> hamstring); anything unmatched -> other."
+                    ),
                 },
                 "position": {"type": "string", "description": "Position filter (e.g. WR, RB)."},
                 "week_post_return": {
