@@ -126,19 +126,11 @@ class TestLoaderFunctions:
 # ── Default dataset completeness ───────────────────────────────────────────────
 
 class TestDefaultDatasets:
-    @pytest.mark.parametrize("dataset_id", [
-        "pbp", "schedules", "rosters", "player_stats",
-        "team_stats_raw", "injuries", "snap_counts",
-        "teams", "players", "contracts", "trades",
-    ])
-    def test_core_datasets_are_default(self, dataset_id):
-        assert REGISTRY[dataset_id].default, \
-            f"{dataset_id} should be a default dataset"
+    def test_every_dataset_is_default(self):
+        """Full nflverse import is baked in — every dataset ships by default."""
+        non_default = [d.dataset_id for d in REGISTRY.values() if not d.default]
+        assert non_default == [], \
+            f"these datasets are not default but should be: {non_default}"
 
-    @pytest.mark.parametrize("dataset_id", [
-        "participation", "nextgen_stats_passing", "ftn_charting",
-        "rosters_weekly", "pfr_advstats_pass",
-    ])
-    def test_heavy_datasets_are_not_default(self, dataset_id):
-        assert not REGISTRY[dataset_id].default, \
-            f"{dataset_id} should be opt-in, not default"
+    def test_default_datasets_equals_all_datasets(self):
+        assert set(DEFAULT_DATASETS) == set(ALL_DATASETS)

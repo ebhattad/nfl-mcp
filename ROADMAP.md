@@ -1,16 +1,17 @@
 # NFL MCP Multi-Dataset Expansion Roadmap
 
 ## Problem Statement
-`nfl-mcp` is a local/remote MCP server ingesting NFL data from nflreadpy into DuckDB and exposing it to AI clients (Claude Desktop, VS Code) via the Model Context Protocol. The goal is to expand ingestion, local DuckDB storage, MCP tooling, and UX to support the full nflreadpy dataset family, then add CLI-agent workflows and a TUI.
+`nfl-mcp` is a local/remote MCP server ingesting NFL data from nflreadpy into DuckDB and exposing it to AI clients (Claude Desktop, VS Code) via the Model Context Protocol. The goal is to expand ingestion, local DuckDB storage, and MCP tooling to support the full nflreadpy dataset family.
 
-## Current State (as of March 2026)
+## Current State (as of June 2026)
 - **Transport**: Streamable HTTP (replaced stdio). Server runs as a persistent process via `nfl-mcp serve`. `init` wizard offers to start the server.
-- **Multi-dataset ingestion**: Declarative registry in `registry.py` covering 33 tables across 3 waves. Generic ingest loop in `ingest.py` with idempotency, schema reconciliation, and `_ingest_metadata` tracking.
-- **MCP tools**: 12 structured tools — `nfl_search_plays`, `nfl_team_stats`, `nfl_player_stats`, `nfl_compare`, `nfl_schedule`, `nfl_roster`, `nfl_injuries`, `nfl_snap_counts`, `nfl_schema`, `nfl_status`, `nfl_catalog`, `nfl_query` (last resort).
+- **Multi-dataset ingestion**: Declarative registry in `registry.py` covering 33 tables across 3 waves. Generic ingest loop in `ingest.py` with idempotency, schema reconciliation, and `_ingest_metadata` tracking. **All 29 registry datasets are now ingested by default** — the full nflverse family is baked into the served image so clients always have whatever data they need.
+- **MCP tools**: 15 structured tools — `nfl_search_plays`, `nfl_team_stats`, `nfl_player_stats`, `nfl_compare`, `nfl_schedule`, `nfl_roster`, `nfl_injuries`, `nfl_snap_counts`, `nfl_fantasy_opportunity`, `nfl_fantasy_rankings`, `nfl_ftn_charting`, `nfl_schema`, `nfl_status`, `nfl_catalog`, `nfl_query` (last resort).
 - **CLI**: `serve` (uvicorn, `--host`/`--port`), `ingest` (`--dataset`/`--start`/`--end`/`--fresh`), `init`, `setup-client`, `doctor`.
 - **Spread/betting data**: `spread_line` and `total_line` are already columns in the `plays` PBP table. Accessible today via `nfl_search_plays` or `nfl_query`.
-- **Fantasy data**: Wave 3 datasets (`ff_playerids`, `ff_rankings`, `ff_opportunity`, `ftn_charting`) are in the registry but opt-in (not ingested by default). No dedicated MCP tools yet.
-- **Testing**: 331 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
+- **Fantasy & charting data**: `ff_opportunity` (→ `nfl_fantasy_opportunity`), `ff_rankings_draft`/`ff_rankings_week` (→ `nfl_fantasy_rankings`), and `ftn_charting` (→ `nfl_ftn_charting`) all have dedicated tools and are ingested by default. Datasets without a dedicated tool yet (e.g. `ff_playerids`, `contracts`) remain queryable via `nfl_query`.
+- **Testing**: 359 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
+- **CI**: `ci.yml` runs the test suite on a single-season ingest. `docker-build.yml` validates the container image on PRs touching Docker-relevant paths — a lightweight single-season bake (via the `INGEST_ARGS` build arg) plus a boot/`/mcp` smoke test, build-only (no push). The full nflverse bake + publish still runs on release/schedule via `docker.yml`.
 - **Eval harness**: Private, lives at `~/nfl-mcp-evals/`. 29 cases, 29/29 passing on gpt-5.4 with prompt caching (~$0.035/run, 94% cache hit).
 
 ## Proposed Architecture (Target)
@@ -28,10 +29,6 @@
 3. **Tooling layers**
    - Keep existing pbp tools stable.
    - Add dataset-aware tools incrementally (status/schema/search/stats endpoints per domain).
-4. **UX layers**
-   - CLI upgrades for selective ingest and refresh workflows.
-   - TUI module for discoverability, query building, and charting.
-   - Agent-oriented CLI entrypoints for scriptable autonomous analysis.
 
 ## Dataset Roadmap (all requested nflreadpy loaders)
 ### Wave 1 (foundation + high-value joins)
@@ -62,32 +59,18 @@ Raw tables for all Wave 1/2 datasets. Serving aggregates used by MCP tools.
 ### ✅ Phase G — Tool Routing Evals
 Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~$0.035/run). `seed=42 + temperature=0` for determinism, retry wrapper for transient errors.
 
-### Phase E — TUI UX
-- Build a curses/textual-based TUI prototype:
-  - dataset browser + freshness/status
-  - query presets by domain
-  - table preview and filters
-  - terminal charts (time series, rank bars, distribution histograms).
-- Add export actions (CSV/JSON/chart snapshot).
-
-### Phase F — CLI Agent Support
-- Add agent-friendly command contracts:
-  - stable JSON output mode
-  - deterministic tool schemas
-  - non-interactive ingest/query flows.
-- Provide templates for local autonomous workflows (batch reports, scheduled refresh + insights).
-
-### Phase H — Fantasy & Advanced Stats Tools *(next up)*
+### Phase H — Fantasy & Advanced Stats Tools *(in progress)*
 - Dedicated MCP tools for Wave 3 datasets once ingested:
-  - `nfl_fantasy_rankings`, `nfl_fantasy_opportunity` (currently in registry, no tools)
-  - `nfl_ftn_charting` for advanced snap/route/coverage charting
+  - ✅ `nfl_fantasy_opportunity` — target/air-yards/carry share (ff_opportunity)
+  - ✅ `nfl_fantasy_rankings` — expert consensus rankings, draft + weekly (ff_rankings_draft / ff_rankings_week)
+  - ✅ `nfl_ftn_charting` — aggregated charting tendencies: play-action, RPO, screen, motion, box/blitz (ftn_charting)
 - Spread/betting data is already queryable via `plays` table (`spread_line`, `total_line`) — consider a `nfl_betting_lines` convenience tool surfacing game-level spread/total without raw SQL.
 
 ## Technical Notes / Design Choices
 - Preserve backward compatibility for existing pbp tools and CLI defaults.
 - Prefer additive migrations; avoid breaking current `plays`-based queries.
 - Introduce shared key strategy early (`game_id`, player IDs, team abbreviations) to prevent join fragmentation.
-- Gate expensive datasets behind explicit flags for local footprint control.
+- Ingest the full nflverse family by default (every registry dataset) so the baked image always has whatever data a client might need; individual datasets remain selectable via `--dataset` for faster local/partial loads.
 - Add source/freshness metadata to every serving response where practical.
 
 ## Risks and Mitigations
@@ -98,5 +81,4 @@ Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~
 
 ## Open Questions
 1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
-2. Scope of first public TUI release (read-only dashboards vs full query builder + chart composer).
-3. Whether `nfl_betting_lines` warrants a dedicated tool or if `nfl_schedule` (which already returns spread/total) is sufficient.
+2. Whether `nfl_betting_lines` warrants a dedicated tool or if `nfl_schedule` (which already returns spread/total) is sufficient.

@@ -149,38 +149,41 @@ Ingest is **idempotent** — re-running skips datasets and seasons already in th
 
 ## Datasets
 
-All data is sourced from [nflverse](https://github.com/nflverse/nflverse-data) via nflreadpy and stored locally in DuckDB.
+All data is sourced from [nflverse](https://github.com/nflverse/nflverse-data) via nflreadpy and stored locally in DuckDB. **Every dataset below is ingested by default** — `nfl-mcp ingest` loads the full nflverse family so any data a client might need is already there.
 
-| Table | Default | Coverage |
-|---|:-:|---|
-| `plays` | ✓ | 1999–present |
-| `schedules` | ✓ | 1999–present |
-| `rosters` | ✓ | 1920–present |
-| `player_stats` | ✓ | 1999–present |
-| `team_stats_raw` | ✓ | 1999–present |
-| `injuries` | ✓ | 2009–present |
-| `snap_counts` | ✓ | 2012–present |
-| `teams` | ✓ | current |
-| `players` | ✓ | all-time |
-| `contracts` | ✓ | historical |
-| `trades` | ✓ | historical |
-| `depth_charts` | | 2001–present |
-| `rosters_weekly` | | 2002–present |
-| `ff_opportunity` | | 2006–present |
-| `officials` | | 2015–present |
-| `nextgen_stats_*` | | 2016–present |
-| `participation` | | 2016–2024 |
-| `pfr_advstats_*` | | 2018–present |
-| `ftn_charting` | | 2022–present |
-| `draft_picks` | | 1980–present |
-| `combine` | | all-time |
-| `ff_playerids` | | current |
-| `ff_rankings_draft` | | current |
-| `ff_rankings_week` | | current |
+> **Season coverage: 2013 onward.** Season-based tables are ingested from **2013** — the window where every nflverse source is complete and consistent — through the current season. Datasets that begin later (e.g. Next Gen Stats 2016, FTN charting 2022) start at their first available season. Non-seasonal reference tables (draft picks, combine, contracts, players) carry their full historical record.
+
+| Table | Loaded range |
+|---|---|
+| `plays` | 2013–present |
+| `schedules` | 2013–present |
+| `rosters` | 2013–present |
+| `player_stats` | 2013–present |
+| `team_stats_raw` | 2013–present |
+| `injuries` | 2013–present |
+| `snap_counts` | 2013–present |
+| `depth_charts` | 2013–present |
+| `rosters_weekly` | 2013–present |
+| `ff_opportunity` | 2013–present |
+| `officials` | 2015–present |
+| `nextgen_stats_*` | 2016–present |
+| `participation` | 2016–2024 |
+| `pfr_advstats_*` | 2018–present |
+| `ftn_charting` | 2022–present |
+| `teams` | current |
+| `players` | all-time |
+| `contracts` | historical |
+| `trades` | historical |
+| `draft_picks` | 1980–present |
+| `combine` | all-time |
+| `ff_playerids` | current |
+| `ff_rankings_draft` | current |
+| `ff_rankings_week` | current |
 
 ```bash
-nfl-mcp ingest --dataset all   # load everything
+nfl-mcp ingest                 # load the full nflverse family (default)
 nfl-mcp ingest --list          # see all dataset names
+nfl-mcp ingest --dataset pbp   # load just one dataset
 ```
 
 ## MCP Tools
@@ -198,7 +201,9 @@ nfl-mcp ingest --list          # see all dataset names
 | `nfl_roster` | Team roster by season and position |
 | `nfl_injuries` | Player injury report status by team, week, and designation |
 | `nfl_snap_counts` | Offensive, defensive, and special teams snap counts per player |
-| `nfl_fantasy_opportunity` | Target share, air yards share, carry share per player per week (2006–present, requires `ff_opportunity` dataset) |
+| `nfl_fantasy_opportunity` | Target share, air yards share, carry share, and expected fantasy points per player per week (2013–present) |
+| `nfl_fantasy_rankings` | Expert consensus rankings (ECR) — draft/dynasty/best-ball (`scope=draft`) or current-week start/sit (`scope=week`) |
+| `nfl_ftn_charting` | Aggregated FTN charting tendencies (2022–present) over scrimmage plays — play-action, RPO, screen, no-huddle, motion, trick-play rates, plus box/pass-rush/blitz counts |
 | `nfl_catalog` | List all loaded tables with row counts and last refresh time |
 
 ## Key columns in `plays`

@@ -7,7 +7,7 @@ from nfl_mcp.tools import (
     nfl_schema, nfl_status, nfl_search_plays, nfl_team_stats,
     nfl_player_stats, nfl_compare, nfl_query,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
-    nfl_fantasy_opportunity,
+    nfl_fantasy_opportunity, nfl_fantasy_rankings, nfl_ftn_charting,
 )
 
 
@@ -406,6 +406,89 @@ class TestNflFantasyOpportunity:
             result = nfl_fantasy_opportunity(season=2024)
         assert "error" in result
         assert "boom" in result["error"]
+
+
+class TestNflFantasyRankings:
+    def test_draft_scope_returns_results(self):
+        result = nfl_fantasy_rankings(scope="draft")
+        assert "error" not in result
+        assert result["scope"] == "draft"
+        assert result["count"] > 0
+
+    def test_week_scope_returns_results(self):
+        result = nfl_fantasy_rankings(scope="week")
+        assert "error" not in result
+        assert result["scope"] == "week"
+
+    def test_default_scope_is_draft(self):
+        result = nfl_fantasy_rankings()
+        assert result["scope"] == "draft"
+
+    def test_filter_by_position_and_team(self):
+        result = nfl_fantasy_rankings(scope="draft", position="RB", team="KC")
+        assert "error" not in result
+
+    def test_filter_by_player(self):
+        result = nfl_fantasy_rankings(scope="week", player="Mahomes")
+        assert "error" not in result
+
+    def test_filter_by_ranking_set(self):
+        result = nfl_fantasy_rankings(scope="draft", ranking_set="dynasty")
+        assert "error" not in result
+
+    def test_draft_rows_have_expected_fields(self):
+        result = nfl_fantasy_rankings(scope="draft", limit=1)
+        if result["count"] > 0:
+            row = result["fantasy_rankings"][0]
+            for field in ("player", "position", "team", "ecr", "ranking_set"):
+                assert field in row
+
+    def test_invalid_scope_returns_error(self):
+        result = nfl_fantasy_rankings(scope="bogus")
+        assert "error" in result
+
+    def test_invalid_limit_falls_back(self):
+        result = nfl_fantasy_rankings(scope="draft", limit="oops")
+        assert "error" not in result
+
+    def test_limit_is_capped(self):
+        result = nfl_fantasy_rankings(scope="draft", limit=99999)
+        assert result["count"] <= 500
+
+    def test_db_error_returns_error_dict(self):
+        with patch("nfl_mcp.tools._execute", side_effect=duckdb.Error("boom")):
+            result = nfl_fantasy_rankings(scope="draft")
+        assert "error" in result
+        assert "boom" in result["error"]
+
+
+@pytest.mark.usefixtures("require_db")
+class TestNflFtnCharting:
+    def test_filter_by_team_and_season(self):
+        result = nfl_ftn_charting(team="KC", season=2024)
+        assert "error" not in result
+        assert result["total_plays"] > 0
+        c = result["charting"]
+        assert 0 <= c["play_action"]["pct"] <= 100
+        assert c["avg_defenders_in_box"] is not None
+
+    def test_filter_by_player(self):
+        result = nfl_ftn_charting(player="Mahomes", season=2024)
+        assert "error" not in result
+
+    def test_filter_by_opponent_and_week(self):
+        result = nfl_ftn_charting(opponent="KC", season=2024, week=1, season_type="REG")
+        assert "error" not in result
+
+    def test_season_range(self):
+        result = nfl_ftn_charting(team="KC", season_from=2022, season_to=2024)
+        assert "error" not in result
+        assert result["total_plays"] > 0
+
+    def test_no_matching_plays_returns_empty(self):
+        result = nfl_ftn_charting(team="KC", season=1999)
+        assert result["total_plays"] == 0
+        assert result["charting"] == {}
 
 
 class TestInputValidation:

@@ -772,9 +772,176 @@ def nfl_fantasy_opportunity(
         return {"error": str(e)}
 
 
+def nfl_fantasy_rankings(
+    player: str | None = None,
+    position: str | None = None,
+    team: str | None = None,
+    scope: str = "draft",
+    ranking_set: str | None = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """
+    Look up fantasy football expert consensus rankings (ECR). Two snapshots:
+    scope='draft' (preseason/dynasty/best-ball draft rankings, ff_rankings_draft) and
+    scope='week' (current-week start/sit rankings, ff_rankings_week). Both reflect the
+    latest scrape — they are not historical/seasonal. Lower ECR = ranked higher.
+    """
+    scope = (scope or "draft").lower()
+    if scope not in ("draft", "week"):
+        return {"error": "scope must be 'draft' or 'week'"}
+
+    try:
+        limit = max(1, min(int(limit), _MAX_ROWS))
+    except (TypeError, ValueError):
+        limit = 50
+
+    conditions, params = [], []
+    if scope == "draft":
+        table = "ff_rankings_draft"
+        player_col, set_col = "player", "page_type"
+        select = (
+            "player, pos AS position, team, ecr, sd, best, worst, bye, "
+            "page_type AS ranking_set, ecr_type, scrape_date"
+        )
+    else:
+        table = "ff_rankings_week"
+        player_col, set_col = "player_name", "page"
+        select = (
+            "player_name AS player, pos AS position, team, rank, ecr, sd, best, worst, "
+            "pos_rank, player_opponent AS opponent, player_bye_week AS bye, "
+            "start_sit_grade, note, page AS ranking_set, scrape_date"
+        )
+
+    if player:
+        conditions.append(f"{player_col} ILIKE ?")
+        params.append(f"%{player}%")
+    if position:
+        conditions.append("pos ILIKE ?")
+        params.append(position.upper())
+    if team:
+        conditions.append("team = ?")
+        params.append(team.upper())
+    if ranking_set:
+        conditions.append(f"{set_col} ILIKE ?")
+        params.append(f"%{ranking_set}%")
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT {select}
+        FROM {table}
+        WHERE {where}
+        ORDER BY ecr ASC NULLS LAST
+        LIMIT {limit}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+        return {"fantasy_rankings": rows, "scope": scope, "count": len(rows)}
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+
+def nfl_ftn_charting(
+    team: str | None = None,
+    opponent: str | None = None,
+    player: str | None = None,
+    season: int | None = None,
+    season_from: int | None = None,
+    season_to: int | None = None,
+    week: int | None = None,
+    season_type: str | None = None,
+) -> Dict[str, Any]:
+    """
+    Aggregated FTN manual charting tendencies (2022–present) over offensive scrimmage
+    plays (pass + run) for a filtered set: play-action, RPO, screen, no-huddle, motion,
+    and trick-play usage rates, plus average defenders in the box (per scrimmage play)
+    and pass rushers / blitzers (per dropback). Joins ftn_charting to plays for
+    team/player/season context. Offensive perspective (team = posteam).
+    """
+    conditions = ["f.nflverse_game_id = p.game_id", "f.nflverse_play_id = p.play_id",
+                  "p.play_type IN ('pass', 'run')"]
+    params: list[Any] = []
+    if team:
+        conditions.append("p.posteam = ?")
+        params.append(team.upper())
+    if opponent:
+        conditions.append("p.defteam = ?")
+        params.append(opponent.upper())
+    if player:
+        conditions.append(
+            "(p.passer_player_name ILIKE ? OR p.rusher_player_name ILIKE ? "
+            "OR p.receiver_player_name ILIKE ?)"
+        )
+        params.extend([f"%{player}%"] * 3)
+    if season:
+        conditions.append("p.season = ?")
+        params.append(int(season))
+    if season_from:
+        conditions.append("p.season >= ?")
+        params.append(int(season_from))
+    if season_to:
+        conditions.append("p.season <= ?")
+        params.append(int(season_to))
+    if week:
+        conditions.append("p.week = ?")
+        params.append(int(week))
+    if season_type:
+        conditions.append("p.season_type = ?")
+        params.append(season_type.upper())
+
+    where = " AND ".join(conditions)
+    sql = f"""
+        SELECT
+            COUNT(*) AS total_plays,
+            SUM(CASE WHEN f.is_play_action THEN 1 ELSE 0 END) AS play_action,
+            SUM(CASE WHEN f.is_rpo THEN 1 ELSE 0 END) AS rpo,
+            SUM(CASE WHEN f.is_screen_pass THEN 1 ELSE 0 END) AS screen_pass,
+            SUM(CASE WHEN f.is_no_huddle THEN 1 ELSE 0 END) AS no_huddle,
+            SUM(CASE WHEN f.is_motion THEN 1 ELSE 0 END) AS motion,
+            SUM(CASE WHEN f.is_trick_play THEN 1 ELSE 0 END) AS trick_play,
+            AVG(f.n_defense_box) AS avg_defenders_in_box,
+            AVG(CASE WHEN p.play_type = 'pass' THEN f.n_pass_rushers END) AS avg_pass_rushers,
+            AVG(CASE WHEN p.play_type = 'pass' THEN f.n_blitzers END) AS avg_blitzers
+        FROM ftn_charting f, plays p
+        WHERE {where}
+    """
+    try:
+        rows = _execute(sql, params if params else None)
+    except (duckdb.Error, ValueError, TimeoutError) as e:
+        logger.error("Tool error: %s", e, exc_info=True)
+        return {"error": str(e)}
+
+    agg = rows[0] if rows else {}
+    total = agg.get("total_plays") or 0
+    if not total:
+        return {"charting": {}, "total_plays": 0}
+
+    def _pct(n: Any) -> float:
+        return round(100.0 * (n or 0) / total, 1)
+
+    def _avg(v: Any) -> float | None:
+        return round(v, 2) if v is not None else None
+
+    return {
+        "charting": {
+            "total_plays": total,
+            "play_action": {"plays": agg.get("play_action") or 0, "pct": _pct(agg.get("play_action"))},
+            "rpo": {"plays": agg.get("rpo") or 0, "pct": _pct(agg.get("rpo"))},
+            "screen_pass": {"plays": agg.get("screen_pass") or 0, "pct": _pct(agg.get("screen_pass"))},
+            "no_huddle": {"plays": agg.get("no_huddle") or 0, "pct": _pct(agg.get("no_huddle"))},
+            "motion": {"plays": agg.get("motion") or 0, "pct": _pct(agg.get("motion"))},
+            "trick_play": {"plays": agg.get("trick_play") or 0, "pct": _pct(agg.get("trick_play"))},
+            "avg_defenders_in_box": _avg(agg.get("avg_defenders_in_box")),
+            "avg_pass_rushers": _avg(agg.get("avg_pass_rushers")),
+            "avg_blitzers": _avg(agg.get("avg_blitzers")),
+        },
+        "total_plays": total,
+    }
+
+
 __all__ = [
     "nfl_schema", "nfl_status", "nfl_query",
     "nfl_search_plays", "nfl_team_stats", "nfl_player_stats", "nfl_compare",
     "nfl_catalog", "nfl_roster", "nfl_injuries", "nfl_schedule", "nfl_snap_counts",
-    "nfl_fantasy_opportunity",
+    "nfl_fantasy_opportunity", "nfl_fantasy_rankings", "nfl_ftn_charting",
 ]
