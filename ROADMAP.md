@@ -11,6 +11,7 @@
 - **Spread/betting data**: `spread_line` and `total_line` are already columns in the `plays` PBP table. Accessible today via `nfl_search_plays` or `nfl_query`.
 - **Fantasy & charting data**: `ff_opportunity` (→ `nfl_fantasy_opportunity`), `ff_rankings_draft`/`ff_rankings_week` (→ `nfl_fantasy_rankings`), and `ftn_charting` (→ `nfl_ftn_charting`) all have dedicated tools and are ingested by default. Datasets without a dedicated tool yet (e.g. `ff_playerids`, `contracts`) remain queryable via `nfl_query`.
 - **Testing**: 359 tests, 100% coverage. Unit tests (`-m "not integration"`), integration tests (`-m integration`) require loaded DB.
+- **CI**: `ci.yml` runs the test suite on a single-season ingest. `docker-build.yml` validates the container image on PRs touching Docker-relevant paths — a lightweight single-season bake (via the `INGEST_ARGS` build arg) plus a boot/`/mcp` smoke test, build-only (no push). The full nflverse bake + publish still runs on release/schedule via `docker.yml`.
 - **Eval harness**: Private, lives at `~/nfl-mcp-evals/`. 29 cases, 29/29 passing on gpt-5.4 with prompt caching (~$0.035/run, 94% cache hit).
 
 ## Proposed Architecture (Target)

@@ -1,0 +1,65 @@
+name: Docker build check
+
+# Validates that the container image still builds when Docker-relevant files
+# change. To keep this fast, the PR build does a lightweight single-season
+# ingest via the INGEST_ARGS build arg instead of the full nflverse bake that
+# release/scheduled builds (docker.yml) perform. The image is built but never
+# pushed — this job only proves the build + bake-validation pipeline is intact.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - nfl_mcp/**
+      - .github/workflows/docker-build.yml
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (lightweight ingest, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: nfl-mcp:ci
+          build-args: |
+            INGEST_ARGS=--dataset all --start 2024 --end 2024
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — container boots and serves
+        run: |
+          docker run -d --name nfl-mcp-ci -p 8000:8000 nfl-mcp:ci
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/mcp || true)
+            if [ -n "$code" ] && [ "$code" != "000" ]; then
+              echo "Server responded with HTTP $code"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Server did not respond on /mcp within timeout"
+          docker logs nfl-mcp-ci || true
+          exit 1
+
+      - name: Tear down container
+        if: always()
+        run: docker rm -f nfl-mcp-ci || true
