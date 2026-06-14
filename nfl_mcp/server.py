@@ -19,7 +19,7 @@ from .tools import (
     nfl_schema, nfl_status, nfl_query, nfl_search_plays,
     nfl_team_stats, nfl_player_stats, nfl_compare,
     nfl_catalog, nfl_roster, nfl_injuries, nfl_schedule, nfl_snap_counts,
-    nfl_fantasy_opportunity,
+    nfl_fantasy_opportunity, nfl_fantasy_rankings, nfl_ftn_charting,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -464,6 +464,99 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="nfl_fantasy_rankings",
+        description=(
+            "PREFERRED for fantasy football ranking questions (expert consensus "
+            "rankings / ECR, start-sit, draft and dynasty value). Two snapshots: "
+            "scope='draft' for preseason/dynasty/best-ball draft rankings, scope='week' "
+            "for the current week's start/sit rankings. Lower ECR = ranked higher. "
+            "These are the latest scrape, not historical. Requires ff_rankings_draft / "
+            "ff_rankings_week datasets. Filter by player, position, team, or ranking_set."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "player": {
+                    "type": "string",
+                    "description": "Player name (partial match, e.g. 'Jefferson')",
+                },
+                "position": {
+                    "type": "string",
+                    "description": "Position filter (e.g. QB, RB, WR, TE, K, DST).",
+                },
+                "team": {
+                    "type": "string",
+                    "description": "Team abbreviation (e.g. KC, PHI).",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["draft", "week"],
+                    "description": "draft = preseason/dynasty/best-ball rankings; week = current-week start/sit rankings (default: draft).",
+                    "default": "draft",
+                },
+                "ranking_set": {
+                    "type": "string",
+                    "description": "Filter the ranking list/format (partial match). For draft: 'redraft', 'dynasty', 'best', or position-specific like 'redraft-rb'. For week: 'ppr', 'qb', etc.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 50, max 500).",
+                    "default": 50,
+                },
+            },
+        },
+    ),
+    Tool(
+        name="nfl_ftn_charting",
+        description=(
+            "PREFERRED for play-style / scheme tendency questions (2022–present). "
+            "Returns aggregated FTN manual charting rates over offensive scrimmage plays "
+            "(pass + run): play-action, RPO, screen, no-huddle, pre-snap motion, and "
+            "trick-play usage, plus average defenders in the box (per scrimmage play) and "
+            "pass rushers / blitzers (per dropback). Use for questions like 'how often "
+            "does KC run play action' or 'what motion rate did Mahomes see'. Offensive "
+            "perspective (team = offense). Requires ftn_charting dataset."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "string",
+                    "description": "Offensive team abbreviation (e.g. KC, PHI).",
+                },
+                "opponent": {
+                    "type": "string",
+                    "description": "Defensive team abbreviation.",
+                },
+                "player": {
+                    "type": "string",
+                    "description": "Player name (partial match) — matches passer, rusher, or receiver.",
+                },
+                "season": {
+                    "type": "integer",
+                    "description": "Exact season year (2022–present). Use season_from/season_to for ranges.",
+                },
+                "season_from": {
+                    "type": "integer",
+                    "description": "Start of season range (inclusive).",
+                },
+                "season_to": {
+                    "type": "integer",
+                    "description": "End of season range (inclusive).",
+                },
+                "week": {
+                    "type": "integer",
+                    "description": "Week number (1–22).",
+                },
+                "season_type": {
+                    "type": "string",
+                    "enum": ["REG", "POST"],
+                    "description": "Filter by season type: REG or POST.",
+                },
+            },
+        },
+    ),
 ]
 
 
@@ -490,6 +583,8 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         "nfl_schedule":     nfl_schedule,
         "nfl_snap_counts":          nfl_snap_counts,
         "nfl_fantasy_opportunity":  nfl_fantasy_opportunity,
+        "nfl_fantasy_rankings":     nfl_fantasy_rankings,
+        "nfl_ftn_charting":         nfl_ftn_charting,
     }
 
     try:

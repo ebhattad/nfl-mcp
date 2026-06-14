@@ -3,6 +3,7 @@
 import time
 from contextlib import contextmanager
 
+import duckdb
 import pytest
 
 import nfl_mcp.tools as tools
@@ -572,3 +573,73 @@ def test_execute_timeout_interrupt_warning_path(monkeypatch):
     with pytest.raises(TimeoutError, match="Query exceeded"):
         tools._execute("SELECT 1")
     assert warnings
+
+
+def test_ftn_charting_builds_all_filters(monkeypatch):
+    captured = {}
+
+    def fake_execute(sql, params=None):
+        captured["sql"] = sql
+        captured["params"] = params
+        return [{
+            "total_plays": 10, "play_action": 4, "rpo": 1, "screen_pass": 2,
+            "no_huddle": 0, "motion": 5, "trick_play": 0,
+            "avg_defenders_in_box": 6.5, "avg_pass_rushers": 4.2, "avg_blitzers": 1.1,
+        }]
+
+    monkeypatch.setattr(tools, "_execute", fake_execute)
+    result = tools.nfl_ftn_charting(
+        team="kc", opponent="phi", player="Mahomes",
+        season_from=2022, season_to=2024, week=3, season_type="reg",
+    )
+    sql, params = captured["sql"], captured["params"]
+    assert "p.posteam = ?" in sql and "p.defteam = ?" in sql
+    assert "p.passer_player_name ILIKE ?" in sql
+    assert "p.season >= ?" in sql and "p.season <= ?" in sql
+    assert "p.week = ?" in sql and "p.season_type = ?" in sql
+    assert params[:2] == ["KC", "PHI"]
+    assert params[2:5] == ["%Mahomes%"] * 3
+    assert params[5:7] == [2022, 2024]
+    assert params[-2:] == [3, "REG"]
+    assert result["charting"]["play_action"]["pct"] == 40.0
+    assert result["charting"]["motion"]["plays"] == 5
+
+
+def test_ftn_charting_exact_season_filter(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        tools, "_execute",
+        lambda sql, params=None: captured.update(sql=sql, params=params) or [{"total_plays": 0}],
+    )
+    result = tools.nfl_ftn_charting(season=2024)
+    assert "p.season = ?" in captured["sql"]
+    assert captured["params"] == [2024]
+    assert result == {"charting": {}, "total_plays": 0}
+
+
+def test_ftn_charting_handles_null_averages(monkeypatch):
+    monkeypatch.setattr(
+        tools, "_execute",
+        lambda sql, params=None: [{
+            "total_plays": 3, "play_action": None, "rpo": None, "screen_pass": None,
+            "no_huddle": None, "motion": None, "trick_play": None,
+            "avg_defenders_in_box": None, "avg_pass_rushers": None, "avg_blitzers": None,
+        }],
+    )
+    result = tools.nfl_ftn_charting(team="KC")
+    c = result["charting"]
+    assert c["play_action"]["pct"] == 0.0
+    assert c["play_action"]["plays"] == 0
+    assert c["avg_defenders_in_box"] is None
+
+
+def test_ftn_charting_empty_rows(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda sql, params=None: [])
+    result = tools.nfl_ftn_charting(team="KC")
+    assert result == {"charting": {}, "total_plays": 0}
+
+
+def test_ftn_charting_returns_error_on_db_error(monkeypatch):
+    monkeypatch.setattr(tools, "_execute", lambda *a, **k: (_ for _ in ()).throw(duckdb.Error("ftn boom")))
+    result = tools.nfl_ftn_charting(team="KC")
+    assert result["error"] == "ftn boom"
