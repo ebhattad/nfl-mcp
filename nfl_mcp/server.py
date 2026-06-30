@@ -13,6 +13,8 @@ from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent, Tool
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.routing import Route
 
 from .tools import (
@@ -700,6 +702,9 @@ TOOLS = [
         },
     ),
 ]
+
+
+@_mcp_server.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOLS
 
@@ -761,7 +766,22 @@ def create_app() -> Starlette:
 
     from mcp.server.fastmcp.server import StreamableHTTPASGIApp
 
+    # Browser-based clients (e.g. MCP Inspector) send a CORS preflight OPTIONS
+    # request before every call. Without this middleware those preflights get
+    # 405 Method Not Allowed and the connection never establishes. Expose
+    # Mcp-Session-Id so the browser can read it back from responses.
+    middleware = [
+        Middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=["*"],
+            expose_headers=["Mcp-Session-Id"],
+        )
+    ]
+
     return Starlette(
         lifespan=lifespan,
+        middleware=middleware,
         routes=[Route("/mcp", endpoint=StreamableHTTPASGIApp(session_manager))],
     )

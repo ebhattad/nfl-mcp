@@ -64,6 +64,26 @@ def test_create_app_returns_starlette_app():
     assert "/mcp" in route_paths
 
 
+def test_create_app_handles_cors_preflight():
+    """Browser clients (e.g. MCP Inspector) send an OPTIONS preflight that must
+    not 405. The CORS middleware should answer it with permissive headers."""
+    from starlette.testclient import TestClient
+
+    app = create_app()
+    with TestClient(app) as client:
+        resp = client.options(
+            "/mcp",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "POST" in resp.headers["access-control-allow-methods"]
+
+
 def test_create_app_lifespan_runs(monkeypatch):
     """Exercise the lifespan context manager (lines 480-483) with a mocked session manager."""
     import contextlib
