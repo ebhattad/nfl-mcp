@@ -69,7 +69,7 @@ nfl-mcp serve --port 9000
 nfl-mcp serve --host 0.0.0.0
 ```
 
-The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`.
+The server uses the [MCP Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport. Point any MCP client at `http://<host>:<port>/mcp`. The server also sends permissive CORS headers, so browser-based clients (e.g. the [MCP Inspector](https://github.com/modelcontextprotocol/inspector)) can connect — their preflight `OPTIONS` requests are answered instead of rejected.
 
 > **Note:** The server must be running for your IDE to connect. Run `nfl-mcp serve` in a terminal and keep it open.
 
