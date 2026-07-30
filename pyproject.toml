@@ -17,7 +17,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Information Analysis",
 ]
 dependencies = [
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
     "duckdb>=1.0",
     "pyarrow>=14.0",
     "nflreadpy>=0.1",
