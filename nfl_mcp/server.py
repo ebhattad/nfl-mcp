@@ -9,9 +9,9 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -28,8 +28,6 @@ from .tools import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("nfl-mcp")
-
-_mcp_server = Server("nfl-mcp")
 
 
 def _tool_error_payload(tool_name: str, exc: Exception) -> dict[str, Any]:
@@ -704,12 +702,10 @@ TOOLS = [
 ]
 
 
-@_mcp_server.list_tools()
 async def list_tools() -> list[Tool]:
     return TOOLS
 
 
-@_mcp_server.call_tool()
 async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     import json
 
@@ -749,6 +745,17 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(_tool_error_payload(name, e), indent=2))]
 
 
+async def _handle_list_tools(ctx: ServerRequestContext, params: Any) -> ListToolsResult:
+    return ListToolsResult(tools=await list_tools())
+
+
+async def _handle_call_tool(ctx: ServerRequestContext, params: Any) -> CallToolResult:
+    return CallToolResult(content=await call_tool(params.name, params.arguments))
+
+
+_mcp_server = Server("nfl-mcp", on_list_tools=_handle_list_tools, on_call_tool=_handle_call_tool)
+
+
 def create_app() -> Starlette:
     """Return a Starlette ASGI app that serves the MCP server over Streamable HTTP."""
     session_manager = StreamableHTTPSessionManager(
@@ -764,7 +771,7 @@ def create_app() -> Starlette:
             yield
         logger.info("NFL MCP server stopped")
 
-    from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+    from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
 
     # Browser-based clients (e.g. MCP Inspector) send a CORS preflight OPTIONS
     # request before every call. Without this middleware those preflights get
