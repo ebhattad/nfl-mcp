@@ -14,7 +14,7 @@ import polars as pl
 from pathlib import Path
 from tqdm import tqdm
 
-ALL_SEASONS = list(range(2013, 2026))
+from .seasons import FIRST_SEASON, all_seasons, current_season
 
 
 def _apply_duckdb_pragmas(conn: duckdb.DuckDBPyConnection, db_path: str) -> None:
@@ -75,14 +75,19 @@ def _ensure_metadata_table(conn: duckdb.DuckDBPyConnection) -> None:
     """Create _ingest_metadata if it doesn't exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS _ingest_metadata (
-            dataset_id  VARCHAR NOT NULL,
-            table_name  VARCHAR NOT NULL,
-            season      INTEGER,          -- NULL for static (non-seasonal) datasets
-            row_count   BIGINT,
-            loaded_at   TIMESTAMP NOT NULL,
-            loader_fn   VARCHAR
+            dataset_id        VARCHAR NOT NULL,
+            table_name        VARCHAR NOT NULL,
+            season            INTEGER,    -- NULL for static (non-seasonal) datasets
+            row_count         BIGINT,
+            loaded_at         TIMESTAMP NOT NULL,
+            loader_fn         VARCHAR,
+            source_updated_at VARCHAR     -- nflverse asset timestamp this came from
         )
     """)
+    # Databases baked before in-season updates existed predate the column.
+    conn.execute(
+        "ALTER TABLE _ingest_metadata ADD COLUMN IF NOT EXISTS source_updated_at VARCHAR"
+    )
 
 
 def _is_loaded(conn: duckdb.DuckDBPyConnection, dataset_id: str, season: int | None = None) -> bool:
@@ -253,7 +258,11 @@ def _create_plays_table(conn: duckdb.DuckDBPyConnection, sample_df: pl.DataFrame
         print(f"  plays table created — {len(sample_df.columns) + 1} columns")
 
 
-def _ingest_pbp_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
+def _ingest_pbp_season(
+    conn: duckdb.DuckDBPyConnection,
+    season: int,
+    replace_season: bool = False,
+) -> int:
     import nflreadpy
     print(f"\n  {season}")
     try:
@@ -282,6 +291,11 @@ def _ingest_pbp_season(conn: duckdb.DuckDBPyConnection, season: int) -> int:
     df = df.with_columns(pl.Series("enhanced_description", descriptions))
 
     _reconcile_schema(conn, "plays", df)
+    if replace_season:
+        # Deleted only once the download has succeeded and been parsed, so a
+        # failed fetch mid-season can never leave a hole in the table.
+        conn.execute(f"DELETE FROM plays WHERE season = {season}")
+        print(f"    Replaced existing {season} rows")
     conn.register("_ingest_df", df.to_arrow())
     conn.execute("INSERT INTO plays BY NAME SELECT * FROM _ingest_df")
     conn.unregister("_ingest_df")
@@ -352,8 +366,8 @@ def _ingest_generic_dataset(
         total_rows = len(df)
 
     else:
-        # Seasonal dataset — iterate per season (bulk mode uses ALL_SEASONS)
-        season_list = ALL_SEASONS if bulk_mode else seasons
+        # Seasonal dataset — iterate per season (bulk mode uses every season)
+        season_list = all_seasons() if bulk_mode else seasons
         for season in season_list:
             # Skip seasons outside the dataset's known coverage window
             if dataset_def.min_season and season < dataset_def.min_season:
@@ -846,6 +860,7 @@ def run_ingest_datasets(
     start: int | None = None,
     end: int | None = None,
     fresh: bool = False,
+    refresh: bool = False,
     skip_views: bool = False,
     db_path: str | None = None,
 ) -> None:
@@ -854,20 +869,34 @@ def run_ingest_datasets(
 
     dataset_ids: list of keys from REGISTRY (e.g. ["pbp", "schedules"])
     start/end:   season range; if both are None, loads all available seasons.
+    fresh:       rebuild from scratch — drops `plays` and reloads every table.
+    refresh:     re-ingest the requested seasons in place, replacing only those
+                 seasons' rows. This is what in-season updates use: `fresh`
+                 would discard the seasons outside the requested range.
+
+    `fresh` and `refresh` are mutually exclusive.
     """
     import nflreadpy
     from .config import get_duckdb_path
     from .registry import REGISTRY
 
+    if fresh and refresh:
+        raise ValueError("fresh and refresh are mutually exclusive")
+
     bulk_mode = start is None and end is None
     if not bulk_mode:
-        start = start or 2013
-        end = end or 2025
+        start = start or FIRST_SEASON
+        end = end or current_season()
         if start > end:
             raise ValueError("start must be less than or equal to end")
 
     path = db_path or str(get_duckdb_path())
-    seasons: list[int] | None = None if bulk_mode else [s for s in ALL_SEASONS if start <= s <= end]
+    seasons: list[int] | None = None if bulk_mode else [s for s in all_seasons() if start <= s <= end]
+    if seasons is not None and not seasons:
+        raise ValueError(
+            f"No ingestable seasons between {start} and {end}; "
+            f"nflverse covers {FIRST_SEASON}–{current_season()}."
+        )
 
     print("=" * 60)
     print("NFL MCP — Multi-Dataset Ingest")
@@ -890,7 +919,7 @@ def run_ingest_datasets(
     if has_pbp:
         print("\n── Play-by-play ──")
 
-        pbp_seasons = ALL_SEASONS if bulk_mode else seasons
+        pbp_seasons = all_seasons() if bulk_mode else seasons
         schema_season = pbp_seasons[-1]
         print(f"  Discovering schema from {schema_season}…")
         sample_df = nflreadpy.load_pbp([schema_season])
@@ -898,11 +927,13 @@ def run_ingest_datasets(
 
         _create_plays_table(conn, sample_df, fresh=fresh)
 
+        # `refresh` re-ingests the requested seasons even though they are
+        # already present — that is the whole point of an in-season update.
         loaded_pbp = {
             row[0] for row in conn.execute(
                 "SELECT DISTINCT season FROM plays WHERE season IS NOT NULL"
             ).fetchall()
-        } if not fresh else set()
+        } if not (fresh or refresh) else set()
 
         to_ingest = [s for s in pbp_seasons if s not in loaded_pbp]
         skipped   = [s for s in pbp_seasons if s in loaded_pbp]
@@ -914,7 +945,7 @@ def run_ingest_datasets(
         else:
             print(f"  Will ingest: {to_ingest}")
             for season in to_ingest:
-                rows = _ingest_pbp_season(conn, season)
+                rows = _ingest_pbp_season(conn, season, replace_season=refresh)
                 pbp_ingested += rows
                 if rows:
                     _record_loaded(conn, "pbp", "plays", "load_pbp", rows, season)
@@ -933,7 +964,9 @@ def run_ingest_datasets(
             if defn is None:
                 print(f"\n  WARNING: unknown dataset '{dataset_id}', skipping")
                 continue
-            _ingest_generic_dataset(conn, defn, seasons, fresh=fresh)
+            # The generic path's `fresh` already means "replace this season's
+            # rows", which is exactly refresh semantics for non-pbp tables.
+            _ingest_generic_dataset(conn, defn, seasons, fresh=fresh or refresh)
 
     # ── Fantasy derived tables (built from already-ingested sources) ────────
     if not skip_views:

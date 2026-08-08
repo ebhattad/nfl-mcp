@@ -46,6 +46,151 @@ class TestServe:
         assert "all interfaces" in result.output
 
 
+# ── serve --auto-update ────────────────────────────────────────────────────────
+
+class TestServeAutoUpdate:
+    @pytest.fixture(autouse=True)
+    def _no_real_server(self, monkeypatch):
+        monkeypatch.setattr("nfl_mcp.cli.uvicorn.run", lambda app, host, port: None)
+        self.started = []
+        monkeypatch.setattr(
+            "nfl_mcp.updater.start_background_updater",
+            lambda seconds, **kw: self.started.append(seconds) or (None, None),
+        )
+
+    def test_off_by_default(self, runner):
+        result = runner.invoke(main, ["serve"], env={"NFL_MCP_AUTO_UPDATE": ""})
+        assert result.exit_code == 0
+        assert self.started == []
+        assert "auto-update" not in result.output
+
+    def test_flag_enables_with_default_interval(self, runner):
+        result = runner.invoke(main, ["serve", "--auto-update"],
+                               env={"NFL_MCP_AUTO_UPDATE": ""})
+        assert result.exit_code == 0
+        assert self.started == [1800]
+        assert "auto-update on" in result.output
+
+    def test_env_var_enables_it(self, runner):
+        result = runner.invoke(main, ["serve"], env={"NFL_MCP_AUTO_UPDATE": "1"})
+        assert result.exit_code == 0
+        assert self.started == [1800]
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_env_var_truthy_spellings(self, runner, value):
+        runner.invoke(main, ["serve"], env={"NFL_MCP_AUTO_UPDATE": value})
+        assert self.started == [1800]
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "", "off"])
+    def test_env_var_falsy_spellings(self, runner, value):
+        runner.invoke(main, ["serve"], env={"NFL_MCP_AUTO_UPDATE": value})
+        assert self.started == []
+
+    def test_interval_from_env(self, runner):
+        runner.invoke(main, ["serve"],
+                      env={"NFL_MCP_AUTO_UPDATE": "1", "NFL_MCP_UPDATE_INTERVAL": "2h"})
+        assert self.started == [7200]
+
+    def test_flag_beats_env_for_interval(self, runner):
+        runner.invoke(main, ["serve", "--auto-update", "--update-interval", "90m"],
+                      env={"NFL_MCP_AUTO_UPDATE": "1", "NFL_MCP_UPDATE_INTERVAL": "2h"})
+        assert self.started == [5400]
+
+    def test_bad_interval_is_a_usage_error(self, runner):
+        result = runner.invoke(main, ["serve", "--auto-update", "--update-interval", "5s"],
+                               env={"NFL_MCP_AUTO_UPDATE": ""})
+        assert result.exit_code != 0
+        assert "minimum" in result.output
+        assert self.started == []
+
+
+# ── update ─────────────────────────────────────────────────────────────────────
+
+class TestUpdateCommand:
+    @pytest.fixture(autouse=True)
+    def _stub_updater(self, monkeypatch):
+        self.calls = []
+        self.watched = []
+        monkeypatch.setattr("nfl_mcp.seasons.current_season", lambda: 2026)
+        monkeypatch.setattr(
+            "nfl_mcp.updater.run_update",
+            lambda **kw: self.calls.append(kw) or True,
+        )
+        monkeypatch.setattr(
+            "nfl_mcp.updater.watch",
+            lambda seconds, **kw: self.watched.append((seconds, kw)),
+        )
+
+    def test_one_shot_reports_update(self, runner):
+        result = runner.invoke(main, ["update"])
+        assert result.exit_code == 0
+        assert "Updated" in result.output
+        assert self.watched == []
+
+    def test_reports_when_already_current(self, runner, monkeypatch):
+        monkeypatch.setattr("nfl_mcp.updater.run_update", lambda **kw: False)
+        result = runner.invoke(main, ["update"])
+        assert result.exit_code == 0
+        assert "Already up to date" in result.output
+
+    def test_defaults_to_default_datasets_and_current_season(self, runner):
+        runner.invoke(main, ["update"])
+        assert self.calls[0]["season"] is None
+        assert self.calls[0]["dataset_ids"] == DEFAULT_DATASETS
+
+    def test_dataset_flag_narrows_the_refresh(self, runner):
+        runner.invoke(main, ["update", "--dataset", "injuries"])
+        assert self.calls[0]["dataset_ids"] == ["injuries"]
+
+    def test_unknown_dataset_is_a_usage_error(self, runner):
+        result = runner.invoke(main, ["update", "--dataset", "nope"])
+        assert result.exit_code != 0
+        assert "Unknown dataset" in result.output
+
+    def test_force_is_forwarded(self, runner):
+        runner.invoke(main, ["update", "--force"])
+        assert self.calls[0]["force"] is True
+
+    def test_explicit_season_is_forwarded(self, runner):
+        runner.invoke(main, ["update", "--season", "2024"])
+        assert self.calls[0]["season"] == 2024
+
+    def test_future_season_is_rejected(self, runner):
+        result = runner.invoke(main, ["update", "--season", "2030"])
+        assert result.exit_code != 0
+        assert "beyond the current season" in result.output
+        assert self.calls == []
+
+    def test_watch_polls_on_the_interval(self, runner):
+        result = runner.invoke(main, ["update", "--watch", "--interval", "2h"])
+        assert result.exit_code == 0
+        assert self.watched[0][0] == 7200
+        assert "Watching nflverse" in result.output
+
+    def test_watch_default_interval(self, runner):
+        runner.invoke(main, ["update", "--watch"])
+        assert self.watched[0][0] == 1800
+
+    def test_watch_rejects_bad_interval(self, runner):
+        result = runner.invoke(main, ["update", "--watch", "--interval", "nope"])
+        assert result.exit_code != 0
+        assert "invalid interval" in result.output
+
+    def test_interval_ignored_without_watch(self, runner):
+        """A sub-minimum interval is harmless when nothing is polling."""
+        result = runner.invoke(main, ["update", "--interval", "1s"])
+        assert result.exit_code == 0
+
+    def test_ctrl_c_exits_cleanly(self, runner, monkeypatch):
+        def interrupt(seconds, **kw):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("nfl_mcp.updater.watch", interrupt)
+        result = runner.invoke(main, ["update", "--watch"])
+        assert result.exit_code == 0
+        assert "Stopped" in result.output
+
+
 # ── ingest --list ──────────────────────────────────────────────────────────────
 
 class TestIngestList:

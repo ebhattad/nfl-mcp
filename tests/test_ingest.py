@@ -48,8 +48,14 @@ def _small_df(**cols) -> pl.DataFrame:
 
 
 def _install_fake_nflreadpy(monkeypatch, **loaders):
-    """Install a lightweight fake nflreadpy module for import-time patching."""
+    """Install a lightweight fake nflreadpy module for import-time patching.
+
+    ``get_current_season`` is pinned so the season bounds these tests exercise
+    stay fixed instead of rolling over every September; override it by passing
+    a replacement in ``loaders``.
+    """
     fake = types.ModuleType("nflreadpy")
+    fake.get_current_season = lambda roster=False: 2025
     for name, fn in loaders.items():
         setattr(fake, name, fn)
     monkeypatch.setitem(sys.modules, "nflreadpy", fake)
@@ -416,6 +422,37 @@ class TestPbpIngestionHelpers:
         _install_fake_nflreadpy(monkeypatch, load_pbp=lambda seasons: (_ for _ in ()).throw(RuntimeError("boom")))
         assert _ingest_pbp_season(conn, 2024) == 0
 
+    def _two_season_frame(self, season, tag):
+        return pl.DataFrame({
+            "season": [season, season], "posteam": ["KC", "SF"], "defteam": ["BAL", "SEA"],
+            "play_id": [1, 2], "desc": [tag, tag], "week": [1, 1],
+        })
+
+    def test_replace_season_swaps_only_that_season(self, conn, monkeypatch):
+        """In-season refresh must replace one season without touching the rest."""
+        _create_plays_table(conn, self._two_season_frame(2025, "x"), fresh=False)
+
+        _install_fake_nflreadpy(monkeypatch, load_pbp=lambda s: self._two_season_frame(2024, "old"))
+        _ingest_pbp_season(conn, 2024)
+        _install_fake_nflreadpy(monkeypatch, load_pbp=lambda s: self._two_season_frame(2025, "week1"))
+        _ingest_pbp_season(conn, 2025)
+
+        _install_fake_nflreadpy(monkeypatch, load_pbp=lambda s: self._two_season_frame(2025, "week2"))
+        assert _ingest_pbp_season(conn, 2025, replace_season=True) == 2
+
+        rows = conn.execute(
+            'SELECT season, "desc", count(*) FROM plays GROUP BY 1, 2 ORDER BY 1, 2'
+        ).fetchall()
+        assert rows == [(2024, "old", 2), (2025, "week2", 2)]
+
+    def test_without_replace_season_rows_accumulate(self, conn, monkeypatch):
+        """The default append path is unchanged — this is what --fresh guards against."""
+        _create_plays_table(conn, self._two_season_frame(2025, "x"), fresh=False)
+        _install_fake_nflreadpy(monkeypatch, load_pbp=lambda s: self._two_season_frame(2025, "week1"))
+        _ingest_pbp_season(conn, 2025)
+        _ingest_pbp_season(conn, 2025)
+        assert conn.execute("SELECT count(*) FROM plays WHERE season = 2025").fetchone()[0] == 4
+
 
 # ── generic dataset ingestion ───────────────────────────────────────────────────
 
@@ -674,7 +711,10 @@ class TestRunIngestOrchestration:
         monkeypatch.setattr("nfl_mcp.ingest.duckdb.connect", lambda path: conn)
         monkeypatch.setattr("nfl_mcp.ingest._ensure_metadata_table", lambda c: None)
         monkeypatch.setattr("nfl_mcp.ingest._create_plays_table", lambda c, df, fresh=False: None)
-        monkeypatch.setattr("nfl_mcp.ingest._ingest_pbp_season", lambda c, season: calls["pbp"].append(season) or 11)
+        monkeypatch.setattr(
+            "nfl_mcp.ingest._ingest_pbp_season",
+            lambda c, season, replace_season=False: calls["pbp"].append(season) or 11,
+        )
         monkeypatch.setattr(
             "nfl_mcp.ingest._record_loaded",
             lambda c, dataset_id, table_name, loader_fn, row_count, season=None: calls["record"].append(
@@ -784,6 +824,17 @@ class TestRunIngestValidation:
     def test_raises_for_start_greater_than_end(self):
         with pytest.raises(ValueError, match="start must be less than or equal to end"):
             run_ingest_datasets(["pbp"], start=2025, end=2020)
+
+    def test_fresh_and_refresh_are_mutually_exclusive(self):
+        """fresh drops the table; refresh replaces one season. Asking for both is a bug."""
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            run_ingest_datasets(["pbp"], start=2024, end=2024, fresh=True, refresh=True)
+
+    def test_raises_when_range_holds_no_ingestable_season(self, monkeypatch):
+        """A range past the current season used to IndexError on seasons[0]."""
+        _install_fake_nflreadpy(monkeypatch)
+        with pytest.raises(ValueError, match="No ingestable seasons"):
+            run_ingest_datasets(["pbp"], start=2030, end=2031)
 
 
 # ── _apply_duckdb_pragmas ─────────────────────────────────────────────────────

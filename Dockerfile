@@ -39,6 +39,23 @@ ENV NFL_MCP_DUCKDB_MEMORY_LIMIT=512MB \
     NFL_MCP_DUCKDB_THREADS=1 \
     NFL_MCP_DUCKDB_TEMP_DIR=/tmp/.duckdb_spill
 
+# In-season updates, off by default so this image keeps behaving exactly as it
+# does today: baked data, instant read-only start, no runtime ingest.
+#
+# Set NFL_MCP_AUTO_UPDATE=1 to have the server poll nflverse and refresh the
+# current season while it serves. Each poll is one small HTTP request asking
+# when nflverse last republished the season; data is downloaded only when that
+# timestamp moves. A refresh ingests into /data/nflread.duckdb.updating and
+# atomically renames it over the live file, so queries keep working throughout.
+#
+# Two things that implies: /data needs room for a second copy of the database,
+# and refreshed data only outlives the container if /data is a mounted volume.
+# Ingest respects the DuckDB caps above, so it spills to disk rather than
+# OOM-killing the replica — but budget above the 1Gi that read-only serving
+# needs before turning this on.
+ENV NFL_MCP_AUTO_UPDATE=0 \
+    NFL_MCP_UPDATE_INTERVAL=30m
+
 EXPOSE 8000
 
 ENTRYPOINT ["nfl-mcp", "serve", "--host", "0.0.0.0", "--port", "8000"]

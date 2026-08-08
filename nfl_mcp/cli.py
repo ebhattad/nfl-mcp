@@ -16,6 +16,7 @@ from pathlib import Path
 import click
 import uvicorn
 
+from .seasons import FIRST_SEASON, current_season
 from .server import create_app
 
 
@@ -26,21 +27,80 @@ def main():
 
 # ── serve ──────────────────────────────────────────────────────────────────────
 
+def _env_flag(name: str) -> bool:
+    """Read a boolean env var, accepting the usual truthy spellings."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @main.command()
 @click.option("--host", default="127.0.0.1", show_default=True,
               help="Host to bind the HTTP server to. Use 0.0.0.0 for LAN access.")
 @click.option("--port", default=8000, show_default=True, type=int,
               help="Port to listen on.")
-def serve(host, port):
+@click.option("--auto-update", is_flag=True,
+              help="Poll nflverse while serving and refresh the current season. "
+                   "Also enabled by NFL_MCP_AUTO_UPDATE=1.")
+@click.option("--update-interval", default=None,
+              help="Poll interval for --auto-update.  "
+                   "[default: NFL_MCP_UPDATE_INTERVAL, or 30m]")
+def serve(host, port, auto_update, update_interval):
     """Start the MCP server over Streamable HTTP."""
     display_host = "localhost" if host == "0.0.0.0" else host
     click.echo(f"🏈 NFL MCP server listening on http://{display_host}:{port}/mcp")
     if host == "0.0.0.0":
         click.echo(f"   (bound to all interfaces — clients should connect via http://localhost:{port}/mcp)")
+
+    if auto_update or _env_flag("NFL_MCP_AUTO_UPDATE"):
+        from .updater import parse_interval, start_background_updater
+
+        interval = update_interval or os.getenv("NFL_MCP_UPDATE_INTERVAL") or "30m"
+        try:
+            interval_seconds = parse_interval(interval)
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        start_background_updater(interval_seconds)
+        click.echo(f"   auto-update on — checking nflverse every {interval}")
+
     uvicorn.run(create_app(), host=host, port=port)
 
 
 # ── ingest ─────────────────────────────────────────────────────────────────────
+
+def _resolve_datasets(names) -> list[str]:
+    """Expand the `all` / `default` aliases into a deduplicated dataset list."""
+    from .registry import REGISTRY, DEFAULT_DATASETS, ALL_DATASETS
+
+    resolved: list[str] = []
+    for name in names:
+        if name == "all":
+            resolved = ALL_DATASETS
+            break
+        elif name == "default":
+            resolved.extend(DEFAULT_DATASETS)
+        elif name in REGISTRY:
+            resolved.append(name)
+        else:
+            raise click.UsageError(
+                f"Unknown dataset '{name}'. Run 'nfl-mcp ingest --list' to see options."
+            )
+    seen: set[str] = set()
+    return [d for d in resolved if not (d in seen or seen.add(d))]
+
+
+def _reject_future_seasons(*values) -> None:
+    """Fail fast on seasons nflverse hasn't published yet.
+
+    The loaders reject them anyway, but far deeper in the call stack and with a
+    message that doesn't mention which flag was at fault.
+    """
+    latest = current_season()
+    for value in values:
+        if value is not None and value > latest:
+            raise click.UsageError(
+                f"Season {value} is beyond the current season ({latest}). "
+                "nflverse publishes a season's data once it kicks off."
+            )
+
 
 @main.command()
 @click.option("--dataset", "datasets", multiple=True, default=["default"],
@@ -49,9 +109,9 @@ def serve(host, port):
                   "Dataset(s) to load. Pass multiple times or use 'all' / 'default'. "
                   "Run with --list to see all available names."
               ))
-@click.option("--start",      default=None, type=click.IntRange(2013, 2025),
+@click.option("--start",      default=None, type=click.IntRange(FIRST_SEASON),
               help="First season to load. Omit to load all available seasons.")
-@click.option("--end",        default=None, type=click.IntRange(2013, 2025),
+@click.option("--end",        default=None, type=click.IntRange(FIRST_SEASON),
               help="Last season to load (inclusive). Omit to load all available seasons.")
 @click.option("--fresh",      is_flag=True,
               help="Re-ingest even if dataset+season is already recorded as loaded.")
@@ -69,7 +129,7 @@ def ingest(datasets, start, end, fresh, skip_views, list_datasets):
       nfl-mcp ingest --dataset pbp --start 2020 --end 2024
       nfl-mcp ingest --list                   # show all dataset names
     """
-    from .registry import REGISTRY, DEFAULT_DATASETS, ALL_DATASETS
+    from .registry import REGISTRY
 
     if list_datasets:
         click.echo("\nAvailable datasets:\n")
@@ -81,24 +141,9 @@ def ingest(datasets, start, end, fresh, skip_views, list_datasets):
 
     if start is not None and end is not None and start > end:
         raise click.UsageError("--start must be less than or equal to --end.")
+    _reject_future_seasons(start, end)
 
-    # Resolve dataset aliases
-    resolved: list[str] = []
-    for name in datasets:
-        if name == "all":
-            resolved = ALL_DATASETS
-            break
-        elif name == "default":
-            resolved.extend(DEFAULT_DATASETS)
-        elif name in REGISTRY:
-            resolved.append(name)
-        else:
-            raise click.UsageError(
-                f"Unknown dataset '{name}'. Run 'nfl-mcp ingest --list' to see options."
-            )
-    # Deduplicate, preserve order
-    seen: set[str] = set()
-    dataset_ids = [d for d in resolved if not (d in seen or seen.add(d))]
+    dataset_ids = _resolve_datasets(datasets)
 
     from .ingest import run_ingest_datasets
     run_ingest_datasets(
@@ -110,21 +155,78 @@ def ingest(datasets, start, end, fresh, skip_views, list_datasets):
     )
 
 
+# ── update ─────────────────────────────────────────────────────────────────────
+
+@main.command()
+@click.option("--season", default=None, type=click.IntRange(FIRST_SEASON),
+              help="Season to refresh.  [default: current season]")
+@click.option("--dataset", "datasets", multiple=True, default=["default"],
+              metavar="NAME",
+              help="Dataset(s) to refresh. Run 'nfl-mcp ingest --list' to see names.")
+@click.option("--force", is_flag=True,
+              help="Refresh even when nflverse reports no new data.")
+@click.option("--watch", "watch_mode", is_flag=True,
+              help="Keep running, re-checking every --interval.")
+@click.option("--interval", default="30m", show_default=True,
+              help="Poll interval for --watch, e.g. 900s / 30m / 2h.")
+@click.option("--skip-views", is_flag=True,
+              help="Skip rebuilding PBP aggregate tables.")
+def update(season, datasets, force, watch_mode, interval, skip_views):
+    """Refresh the current season as nflverse publishes new games.
+
+    Asks nflverse when it last republished the season's play-by-play and only
+    downloads when that timestamp has moved, so polling costs one small HTTP
+    request. Only the named season's rows are replaced — other seasons are
+    left alone.
+
+    \b
+    Examples:
+      nfl-mcp update                          # one pass over the current season
+      nfl-mcp update --watch                  # poll every 30 minutes
+      nfl-mcp update --watch --interval 2h    # ...or every two hours
+      nfl-mcp update --season 2026 --force    # re-ingest 2026 regardless
+    """
+    from .updater import parse_interval, run_update, watch as watch_updates
+
+    _reject_future_seasons(season)
+    dataset_ids = _resolve_datasets(datasets)
+    options = dict(season=season, dataset_ids=dataset_ids,
+                   force=force, skip_views=skip_views)
+
+    if not watch_mode:
+        changed = run_update(**options)
+        click.secho("  ✓ Updated" if changed else "  ✓ Already up to date", fg="green")
+        return
+
+    try:
+        interval_seconds = parse_interval(interval)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    click.echo(f"🏈 Watching nflverse — checking every {interval}  (Ctrl-C to stop)")
+    try:
+        watch_updates(interval_seconds, **options)
+    except KeyboardInterrupt:
+        click.echo("\n  Stopped.")
+
+
 # ── init ───────────────────────────────────────────────────────────────────────
 
 @main.command()
-@click.option("--start", default=2013, show_default=True,
-              type=click.IntRange(2013, 2025),
+@click.option("--start", default=FIRST_SEASON, show_default=True,
+              type=click.IntRange(FIRST_SEASON),
               help="First season to load.")
-@click.option("--end", default=2025, show_default=True,
-              type=click.IntRange(2013, 2025),
-              help="Last season to load.")
+@click.option("--end", default=None,
+              type=click.IntRange(FIRST_SEASON),
+              help="Last season to load.  [default: current season]")
 @click.option("--skip-ingest", is_flag=True,
               help="Skip data ingestion (configure only).")
 def init(start, end, skip_ingest):
     """Interactive setup wizard — configure database, load data, set up your IDE."""
+    end = current_season() if end is None else end
     if start > end:
         raise click.UsageError("--start must be less than or equal to --end.")
+    _reject_future_seasons(start, end)
     from .config import save_config, load_config, DEFAULT_DUCKDB_PATH
 
     click.echo()
