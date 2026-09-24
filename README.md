@@ -1,6 +1,6 @@
 # nfl-mcp
 
-MCP server for NFL data (2013–2025), powered by [nflreadpy](https://github.com/nflverse/nflreadpy) and DuckDB.
+MCP server for NFL data (2013 through the current season), powered by [nflreadpy](https://github.com/nflverse/nflreadpy) and DuckDB.
 Query play-by-play, rosters, injuries, stats, and more using natural language in Claude Code, VS Code, or Claude Desktop.
 
 Ask Claude questions like:
@@ -18,7 +18,7 @@ pip install nfl-mcp        # or: uvx nfl-mcp
 nfl-mcp init               # configure, load data, and start the server
 ```
 
-`init` walks you through setup and offers to start the server immediately when done. No database server to install. No credentials to manage. Data is stored locally in DuckDB.
+`init` walks you through setup and offers to start the server immediately when done. No database server to install. No credentials to manage. Data is stored locally in DuckDB and can be refreshed through today with `nfl-mcp update`.
 
 ## Deploy to Azure
 
