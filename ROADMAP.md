@@ -90,5 +90,5 @@ Private eval harness at `~/nfl-mcp-evals/`. 29 cases, gpt-5.4, prompt caching (~
 - **Tool explosion** → group tools by domain with consistent naming and shared filter schema.
 
 ## Open Questions
-1. Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).
+1. ~~Required freshness SLA by dataset (manual refresh vs scheduled/background refresh).~~ **Answered:** freshness is driven by nflverse's own publish cadence rather than a fixed SLA. `nfl-mcp update` polls the `pbp` release asset timestamp and refreshes the current season only when it moves; `serve --auto-update` does the same in-process via a copy-and-swap so serving is uninterrupted. Both are opt-in — the default remains a manual `ingest`, and the container keeps serving baked data unless `NFL_MCP_AUTO_UPDATE=1`. Play-by-play is the trigger signal for all datasets; per-dataset timestamps would be finer-grained but cost one API call each.
 2. Whether `nfl_betting_lines` warrants a dedicated tool or if `nfl_schedule` (which already returns spread/total) is sufficient.

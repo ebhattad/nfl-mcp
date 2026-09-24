@@ -18,6 +18,9 @@ nfl_mcp/
   registry.py     # Declarative dataset definitions (REGISTRY, DatasetDef)
   database.py     # get_db_connection() context manager (read-only DuckDB)
   config.py       # ~/.nfl-mcp/config.json read/write, get_duckdb_path()
+  seasons.py      # FIRST_SEASON + current_season()/all_seasons() — no hardcoded end year
+  freshness.py    # Has nflverse published anything new? (GitHub release asset timestamps)
+  updater.py      # In-season refresh: run_update, run_update_swap, watch loop
 
 tests/
   test_registry.py   # Registry structure, coverage windows, loader functions
@@ -105,6 +108,30 @@ Each entry in `REGISTRY` is a `DatasetDef` with:
 ## Ingest Idempotency
 
 The ingest loop checks `_ingest_metadata` before every dataset+season. Re-running the same ingest command is safe — already-loaded combinations are skipped. Use `--fresh` to force re-ingest.
+
+## `fresh` vs `refresh`
+
+Two different things, and mixing them up loses data:
+
+- **`fresh`** rebuilds from scratch. On the pbp path it runs `DROP TABLE plays` — the *whole* table, regardless of `--start`/`--end`. Never use it for a periodic update; `--dataset pbp --start 2026 --end 2026 --fresh` would delete 2013–2025.
+- **`refresh`** re-ingests the requested seasons and replaces only those seasons' rows. This is what `nfl-mcp update` uses. The delete happens *after* the download parses, so a failed fetch can't leave a hole.
+
+They're mutually exclusive; passing both raises.
+
+## Season Bounds
+
+There is no hardcoded end year anywhere. `seasons.current_season()` delegates to `nflreadpy.get_current_season()`, which rolls over on the Thursday after Labor Day — so the package can never disagree with the loader about which seasons exist, and needs no edit each September. Tests that care must stub `get_current_season` (see `_install_fake_nflreadpy`) or they become time-dependent.
+
+## In-Season Updates and the DuckDB Write Lock
+
+DuckDB permits **one writer and no concurrent readers**. A second process cannot take the write lock while the server holds the file open, a single process cannot mix read-only and read-write connections to the same path, and a reader cannot open a file a writer holds. This is why there are two update paths:
+
+- `run_update` writes straight to the database — for cron and `--watch`, where no server is running.
+- `run_update_swap` copies the live database, ingests into the copy, and `os.replace`s it over the original — for `serve --auto-update`. Because `get_db_connection()` opens a fresh connection per request and re-resolves the path, new requests pick up the new file while in-flight ones finish on the old inode. No downtime, and the serve path keeps its read-only connections.
+
+Both probe nflverse *before* doing any work, so an idle poll costs one small HTTP request and never copies the database.
+
+A refresh deletes and re-inserts rather than rewriting the file, and DuckDB does not hand the freed pages back to the OS, so the database grows with each cycle — a measured full-season refresh took 674 MB to 760 MB with identical row counts. That is reclaimable slack, not duplication; `ingest --fresh` compacts it. The swap path therefore needs disk headroom for a copy of a file that is itself growing over a season. Note this is a narrower version of the runtime-ingest design removed in #16: incremental (one season, not all), memory-capped by the existing `NFL_MCP_DUCKDB_*` vars, and opt-in so the baked image is unchanged by default.
 
 ## Common Pitfalls
 

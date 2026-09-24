@@ -121,6 +121,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude
 nfl-mcp init               Interactive setup wizard
 nfl-mcp serve              Start the MCP server (Streamable HTTP, default port 8000)
 nfl-mcp ingest             Load NFL data into the database
+nfl-mcp update             Refresh the current season as new games are played
 nfl-mcp setup-client       Configure IDE MCP clients
 nfl-mcp doctor             Health check
 ```
@@ -131,6 +132,7 @@ nfl-mcp doctor             Health check
 nfl-mcp serve
 nfl-mcp serve --port 9000
 nfl-mcp serve --host 0.0.0.0
+nfl-mcp serve --auto-update              # refresh the current season while serving
 ```
 
 ### Ingestion options
@@ -146,6 +148,18 @@ nfl-mcp ingest --list                   # show all available dataset names
 ```
 
 Ingest is **idempotent** — re-running skips datasets and seasons already in the database.
+
+## In-season updates
+
+nflverse rewrites the current season's files as games finish. `nfl-mcp update` refreshes only that season, leaving the rest of the database alone — it checks a published timestamp first and downloads only when that timestamp has moved.
+
+```bash
+nfl-mcp update                        # one pass over the current season
+nfl-mcp update --watch --interval 2h  # keep polling
+nfl-mcp serve --auto-update           # or refresh while serving, no downtime
+```
+
+Don't run `update` against a database a server already holds open — DuckDB allows a single writer. `serve --auto-update` sidesteps that by building a refreshed copy and swapping it in, and works in Docker via `NFL_MCP_AUTO_UPDATE=1` (off by default; mount a named volume at `/data` to keep the result). The file grows with each refresh, since DuckDB doesn't reclaim deleted pages; `nfl-mcp ingest --fresh` compacts it.
 
 ## Datasets
 
