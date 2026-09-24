@@ -1,6 +1,6 @@
 # nfl-mcp
 
-MCP server for NFL data (2013–2025), powered by [nflreadpy](https://github.com/nflverse/nflreadpy) and DuckDB.
+MCP server for NFL data (2013–2026, fresh through September 24, 2026), powered by [nflreadpy](https://github.com/nflverse/nflreadpy) and DuckDB.
 Query play-by-play, rosters, injuries, stats, and more using natural language in Claude Code, VS Code, or Claude Desktop.
 
 Ask Claude questions like:
